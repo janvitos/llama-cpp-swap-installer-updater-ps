@@ -66,8 +66,8 @@ function Write-Warn ([string]$Msg) { Write-Host "  [!!] $Msg" -ForegroundColor Y
 function Write-Do   ([string]$Msg) { Write-Host "  [>>] $Msg" -ForegroundColor Cyan   }
 
 function Read-Confirm ([string]$Prompt) {
-    $r = (Read-Host "  $Prompt (y/N)").Trim()
-    return $r -match '^[yY]$'
+    $r = (Read-Host "  $Prompt (Y/n)").Trim()
+    return $r -eq '' -or $r -match '^[yY]$'
 }
 
 # -------------------------------------------------------------------------------
