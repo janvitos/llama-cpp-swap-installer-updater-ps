@@ -308,45 +308,83 @@ function Get-CudartAsset ($Assets, [string]$CudaVersion) {
     } | Select-Object -First 1
 }
 
+function Get-NvidiaCudaVersion {
+    try {
+        $smi = nvidia-smi 2>$null | Out-String
+        if ($smi -match 'CUDA Version:\s*(\d+\.\d+)') { return $Matches[1] }
+    } catch { }
+    return $null
+}
+
 function Select-Build ($Builds, [string]$CurrentBuild) {
     $labels = $Builds | ForEach-Object {
         if ($_.name -match '^llama-[^-]+-bin-win-(.+)-x64\.zip$') { $Matches[1] } else { $_.name }
     }
 
+    # Pre-select the current build if present, otherwise 0
     $cursor = 0
     for ($i = 0; $i -lt $labels.Count; $i++) {
         if ($labels[$i] -eq $CurrentBuild) { $cursor = $i; break }
+    }
+
+    # Detect NVIDIA GPU and find the best matching CUDA build
+    $recommendedIdx = -1
+    $nvCuda = Get-NvidiaCudaVersion
+    if ($nvCuda) {
+        $nvVer  = [version]$nvCuda
+        $bestVer = $null
+        for ($i = 0; $i -lt $labels.Count; $i++) {
+            if ($labels[$i] -match '^cuda-(\d+\.\d+)$') {
+                $v = [version]$Matches[1]
+                if ($v -le $nvVer -and ($null -eq $bestVer -or $v -gt $bestVer)) {
+                    $bestVer = $v
+                    $recommendedIdx = $i
+                }
+            }
+        }
+        if ($recommendedIdx -ge 0 -and $CurrentBuild -eq '') {
+            $cursor = $recommendedIdx
+        }
     }
 
     Write-Host '  Available llama.cpp Windows builds:' -ForegroundColor Cyan
     Write-Host '  Use arrow keys to select, Enter to confirm.' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Notes:' -ForegroundColor DarkGray
-    Write-Host '  * CUDA builds (green) require an NVIDIA GPU' -ForegroundColor DarkGray
+    if ($nvCuda) {
+        Write-Host "  * NVIDIA GPU detected (CUDA $nvCuda) -- recommended build is pre-selected" -ForegroundColor DarkGray
+    }
     Write-Host '  * avx2   -- recommended for most modern CPUs (Intel Haswell+ / AMD Ryzen)' -ForegroundColor DarkGray
     Write-Host '  * vulkan -- GPU acceleration via Vulkan; works on AMD, Intel, and NVIDIA' -ForegroundColor DarkGray
     Write-Host '  * avx    -- for older CPUs that lack AVX2 support' -ForegroundColor DarkGray
     Write-Host ''
 
-    $esc     = [char]27
-    $maxLen  = ($labels | ForEach-Object {
-        $marker = if ($_ -eq $CurrentBuild) { '  <- current' } else { '' }
-        "  $_$marker".Length
-    } | Measure-Object -Maximum).Maximum + 4  # 4 chars right-padding
+    $esc         = [char]27
+    $labelWidth  = ($labels | ForEach-Object { "  $_".Length } | Measure-Object -Maximum).Maximum + 2
+    $markerWidth = '  <- recommended'.Length  # longest possible marker; pads shorter ones to this width
 
     function Draw-Menu ([int]$Selected) {
         for ($i = 0; $i -lt $labels.Count; $i++) {
             $label  = $labels[$i]
-            $isCuda = $label -match '^cuda-'
-            $marker = if ($label -eq $CurrentBuild) { '  <- current' } else { '' }
-            $text   = "  $label$marker".PadRight($maxLen)
+            $isRec  = ($i -eq $recommendedIdx)
+            $marker = if ($label -eq $CurrentBuild) { '  <- current' }
+                      elseif ($isRec) { '  <- recommended' }
+                      else { '' }
+
+            $labelPart  = "  $label".PadRight($labelWidth)
+            $markerPart = $marker.PadRight($markerWidth)
 
             if ($i -eq $Selected) {
-                Write-Host $text -BackgroundColor DarkGreen -ForegroundColor White
-            } elseif ($isCuda) {
-                Write-Host $text -ForegroundColor DarkGreen
+                Write-Host $labelPart -BackgroundColor DarkGreen -ForegroundColor White -NoNewline
+                if ($isRec) {
+                    Write-Host $markerPart -ForegroundColor DarkGreen
+                } else {
+                    Write-Host $markerPart
+                }
+            } elseif ($isRec) {
+                Write-Host "$labelPart$markerPart" -ForegroundColor DarkGreen
             } else {
-                Write-Host $text -ForegroundColor DarkGray
+                Write-Host "$labelPart$markerPart" -ForegroundColor Gray
             }
         }
     }

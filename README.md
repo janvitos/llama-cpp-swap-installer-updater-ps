@@ -9,7 +9,7 @@ A PowerShell wizard that downloads, installs, and configures [llama.cpp](https:/
 **First run** — walks you through a full setup wizard:
 
 - 📦 Downloads the latest **llama.cpp** and **llama-swap** Windows binaries from GitHub Releases
-- 🔧 Lets you choose a llama.cpp build interactively (AVX2, AVX, Vulkan, CUDA, ...)
+- 🔧 Lets you choose a llama.cpp build interactively (AVX2, AVX, Vulkan, CUDA, ...) — if an NVIDIA GPU is detected, the best matching CUDA build is pre-selected automatically
 - 🔍 Scans a folder of your choice for `.gguf` model files
 - 📝 Generates a `config.yaml` for llama-swap with a `llama-server` command for each model
 - 🔗 Generates an `opencode.json` so [opencode](https://opencode.ai) connects to llama-swap automatically
@@ -28,7 +28,7 @@ A PowerShell wizard that downloads, installs, and configures [llama.cpp](https:/
 - Internet connection (for downloading binaries from GitHub)
 - `.gguf` model files (if you want to configure llama-swap)
 
-> For CUDA builds of llama.cpp: an NVIDIA GPU with up-to-date drivers is required. The necessary CUDA runtime DLLs are downloaded automatically alongside the build — no separate CUDA Toolkit installation needed.
+> For CUDA builds of llama.cpp: an NVIDIA GPU with up-to-date drivers is required. The necessary CUDA runtime DLLs are downloaded automatically alongside the build — no separate CUDA Toolkit installation needed. The installer detects your GPU via `nvidia-smi` and pre-selects the highest CUDA build supported by your driver.
 
 ---
 
