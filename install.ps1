@@ -115,50 +115,50 @@ function Invoke-Download ([string]$Url, [string]$OutFile) {
     $fileName = Split-Path -Leaf $OutFile
     Write-Do "Downloading $fileName..."
 
-    $wc       = New-Object System.Net.WebClient
+    # HEAD request to get total size for the progress bar
+    $total = 0L
+    try {
+        $req           = [System.Net.HttpWebRequest]::Create($Url)
+        $req.Method    = 'HEAD'
+        $req.UserAgent = 'llama-installer/1.0'
+        $resp  = $req.GetResponse()
+        $total = $resp.ContentLength
+        $resp.Dispose()
+    } catch { }
+
+    # Download on a thread pool thread; poll the output file size for progress
+    $wc   = New-Object System.Net.WebClient
     $wc.Headers.Add('User-Agent', 'llama-installer/1.0')
+    $task = $wc.DownloadFileTaskAsync([Uri]$Url, $OutFile)
+
     $barWidth = 40
     $lastPct  = -1
 
-    # Synchronized hashtable lets the event-handler thread share data safely
-    $progress = [hashtable]::Synchronized(@{ Pct = 0; Bytes = 0L; Total = 0L; Error = $null })
-
-    $subProgress = Register-ObjectEvent $wc DownloadProgressChanged -MessageData $progress -Action {
-        $Event.MessageData.Pct   = $Event.SourceEventArgs.ProgressPercentage
-        $Event.MessageData.Bytes = $Event.SourceEventArgs.BytesReceived
-        $Event.MessageData.Total = $Event.SourceEventArgs.TotalBytesToReceive
-    }
-    $subCompleted = Register-ObjectEvent $wc DownloadFileCompleted -MessageData $progress -Action {
-        if ($Event.SourceEventArgs.Error) { $Event.MessageData.Error = $Event.SourceEventArgs.Error }
-    }
-
     try {
-        $wc.DownloadFileAsync([Uri]$Url, $OutFile)
-
-        while ($wc.IsBusy) {
-            if ($progress.Pct -ne $lastPct) {
-                if ($progress.Total -gt 0) {
-                    $filled = [int]($progress.Pct / 100 * $barWidth)
-                    $bar    = ('=' * $filled) + ('-' * ($barWidth - $filled))
-                    $dlMb   = '{0:N1}' -f ($progress.Bytes / 1MB)
-                    $totMb  = '{0:N1}' -f ($progress.Total / 1MB)
-                    Write-Host "`r  [$bar] $($progress.Pct)% ($dlMb / $totMb MB)  " -NoNewline
-                } else {
-                    Write-Host "`r  Downloading...  " -NoNewline
-                }
-                $lastPct = $progress.Pct
+        while (-not $task.IsCompleted) {
+            if ($total -gt 0) {
+                try {
+                    $downloaded = (Get-Item $OutFile -ErrorAction Stop).Length
+                    $pct        = [math]::Min(99, [int]($downloaded / $total * 100))
+                    if ($pct -ne $lastPct) {
+                        $filled = [int]($pct / 100 * $barWidth)
+                        $bar    = ('=' * $filled) + ('-' * ($barWidth - $filled))
+                        $dlMb   = '{0:N1}' -f ($downloaded / 1MB)
+                        $totMb  = '{0:N1}' -f ($total / 1MB)
+                        Write-Host "`r  [$bar] $pct% ($dlMb / $totMb MB)  " -NoNewline
+                        $lastPct = $pct
+                    }
+                } catch { }
+            } else {
+                Write-Host "`r  Downloading...  " -NoNewline
             }
-            Start-Sleep -Milliseconds 100
+            Start-Sleep -Milliseconds 200
         }
     } finally {
-        Unregister-Event -SourceIdentifier $subProgress.Name  -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier $subCompleted.Name -ErrorAction SilentlyContinue
-        $subProgress  | Remove-Job -Force -ErrorAction SilentlyContinue
-        $subCompleted | Remove-Job -Force -ErrorAction SilentlyContinue
         $wc.Dispose()
     }
 
-    if ($progress.Error) { throw $progress.Error }
+    if ($task.IsFaulted) { throw $task.Exception.InnerException }
 
     Write-Host "`r  [$('=' * $barWidth)] 100%                              "
     Write-Ok "$fileName downloaded."
