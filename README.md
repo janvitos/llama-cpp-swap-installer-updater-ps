@@ -1,4 +1,4 @@
-# llama-swap + llama.cpp Installer / Updater
+# llama.cpp + llama-swap Installer / Updater
 
 A PowerShell wizard that downloads, installs, and configures [llama-swap](https://github.com/mostlygeek/llama-swap) and [llama.cpp](https://github.com/ggml-org/llama.cpp) on Windows — and keeps them up to date with a single command.
 
