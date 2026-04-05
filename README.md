@@ -93,6 +93,12 @@ Or in PowerShell:
 
 ---
 
+## 💾 Saved Settings
+
+After the first run, all your choices (install directory, model folder, listen host/port, and all model parameters) are saved to `settings.json` in the install directory. Subsequent runs — including `--reconfigure` and `--scan` — pre-fill every prompt with your previous values so you only need to press Enter to keep them.
+
+---
+
 ## 📁 Directory Layout
 
 After a full install, your chosen directory will look like this:
@@ -101,6 +107,7 @@ After a full install, your chosen directory will look like this:
 <install dir>\
     install.ps1
     install.bat
+    settings.json               <- saved settings (auto-generated)
     start-llama-swap.bat        <- double-click to start llama-swap
     llama.cpp\
         llama-server.exe
