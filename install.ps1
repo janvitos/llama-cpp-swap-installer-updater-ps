@@ -112,15 +112,46 @@ function Save-LocalVersion ([string]$Dir, [string]$Version) {
 # -------------------------------------------------------------------------------
 
 function Invoke-Download ([string]$Url, [string]$OutFile) {
-    Write-Do "Downloading $(Split-Path -Leaf $OutFile)..."
-    $prev = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'
+    $fileName = Split-Path -Leaf $OutFile
+    Write-Do "Downloading $fileName..."
+
+    $request           = [System.Net.HttpWebRequest]::Create($Url)
+    $request.UserAgent = 'llama-installer/1.0'
+    $response          = $request.GetResponse()
+    $total             = $response.ContentLength
+    $srcStream         = $response.GetResponseStream()
+    $dstStream         = [System.IO.File]::Create($OutFile)
+    $buffer            = New-Object byte[] 65536
+    $downloaded        = 0
+    $barWidth          = 40
+
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+        while ($true) {
+            $read = $srcStream.Read($buffer, 0, $buffer.Length)
+            if ($read -le 0) { break }
+            $dstStream.Write($buffer, 0, $read)
+            $downloaded += $read
+
+            if ($total -gt 0) {
+                $pct   = [int]($downloaded / $total * 100)
+                $filled = [int]($downloaded / $total * $barWidth)
+                $bar   = ('=' * $filled) + ('-' * ($barWidth - $filled))
+                $dlMb  = '{0:N1}' -f ($downloaded / 1MB)
+                $totMb = '{0:N1}' -f ($total / 1MB)
+                Write-Host "`r  [$bar] $pct% ($dlMb / $totMb MB)  " -NoNewline
+            } else {
+                $dlMb = '{0:N1}' -f ($downloaded / 1MB)
+                Write-Host "`r  Downloading... $dlMb MB  " -NoNewline
+            }
+        }
+    } finally {
+        $dstStream.Dispose()
+        $srcStream.Dispose()
+        $response.Dispose()
     }
-    finally {
-        $ProgressPreference = $prev
-    }
+
+    Write-Host ''
+    Write-Ok "$fileName downloaded."
 }
 
 function Expand-ToDir ([string]$Zip, [string]$Dest) {
