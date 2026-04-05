@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Compress-Archive -Path ''D:\\\\llama-installer\\\\install.ps1'' -DestinationPath ''D:\\\\llama-installer\\\\install.zip'' -Force\")",
+      "Bash(powershell -File:*)",
+      "Bash(powershell -Command \"[System.Management.Automation.Language.Parser]::ParseFile\\(''D:\\\\llama-installer\\\\install.ps1'', [ref]$null, [ref]$e\\) | Out-Null; if \\($e\\) { $e | % { ''Line '' + $_.Extent.StartLineNumber + '': '' + $_.Message } } else { ''No syntax errors'' }\")",
+      "Bash(powershell -Command \"$bytes = [System.IO.File]::ReadAllBytes\\(''D:\\\\llama-installer\\\\install.ps1''\\); ''First 4 bytes: '' + \\($bytes[0..3] -join '', ''\\); ''File size: '' + $bytes.Length\")",
+      "Bash(powershell -Command \"& { $b = [System.IO.File]::ReadAllBytes\\(''D:\\\\llama-installer\\\\install.ps1''\\); Write-Host \\(''Bytes 0-3: '' + $b[0] + '','' + $b[1] + '','' + $b[2] + '','' + $b[3]\\); Write-Host \\(''Size: '' + $b.Length\\) }\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"D:\\\\llama-installer\\\\.check.ps1\")",
+      "Bash(powershell -Command \"Remove-Item ''D:\\\\llama-installer\\\\.check.ps1'' -Force\")",
+      "Bash(powershell -Command \"Select-String -Path ''D:\\\\llama-installer\\\\install.ps1'' -Pattern ''PORT''\")",
+      "Bash(powershell -Command \"Select-String -Path ''D:\\\\llama-installer\\\\install.ps1'' -Pattern ''$\\\\{PORT\\\\}''\")"
+    ]
+  }
+}
