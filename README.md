@@ -9,7 +9,7 @@ A PowerShell wizard that downloads, installs, and configures [llama.cpp](https:/
 **First run** — walks you through a full setup wizard:
 
 - 📦 Downloads the latest **llama.cpp** and **llama-swap** Windows binaries from GitHub Releases
-- 🔧 Lets you choose a llama.cpp build (AVX2, AVX, Vulkan, CUDA, ...)
+- 🔧 Lets you choose a llama.cpp build interactively (AVX2, AVX, Vulkan, CUDA, ...)
 - 🔍 Scans a folder of your choice for `.gguf` model files
 - 📝 Generates a `config.yaml` for llama-swap with a `llama-server` command for each model
 - 🔗 Generates an `opencode.json` so [opencode](https://opencode.ai) connects to llama-swap automatically
