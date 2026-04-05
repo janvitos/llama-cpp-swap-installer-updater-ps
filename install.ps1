@@ -40,6 +40,7 @@ $ScriptRoot     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LlamaSwapDir   = Join-Path $ScriptRoot 'llama-swap'
 $LlamaCppDir    = Join-Path $ScriptRoot 'llama.cpp'
 $DownloadDir    = Join-Path $ScriptRoot '.downloads'
+$SettingsFile   = Join-Path $ScriptRoot 'settings.json'
 
 $GH_API             = 'https://api.github.com/repos'
 $REPO_LLAMA_SWAP    = 'mostlygeek/llama-swap'
@@ -70,9 +71,19 @@ function Write-Info ([string]$Msg) { Write-Host "  [..] $Msg" -ForegroundColor G
 function Write-Warn ([string]$Msg) { Write-Host "  [!!] $Msg" -ForegroundColor Yellow }
 function Write-Do   ([string]$Msg) { Write-Host "  [>>] $Msg" -ForegroundColor Cyan   }
 
-function Read-Confirm ([string]$Prompt) {
-    $r = (Read-Host "  $Prompt (Y/n)").Trim()
-    return $r -eq '' -or $r -match '^[yY]$'
+function Read-Confirm ([string]$Prompt, [bool]$Default = $true) {
+    $hint = if ($Default) { 'Y/n' } else { 'y/N' }
+    $r    = (Read-Host "  $Prompt ($hint)").Trim()
+    if ([string]::IsNullOrEmpty($r)) { return $Default }
+    return $r -match '^[yY]$'
+}
+
+function Read-OptionalParam ([string]$Label, [string]$Saved) {
+    $hint = if ($Saved) { "[$Saved] (- to clear)" } else { '(Enter to omit)' }
+    $val  = (Read-Host "  $Label $hint").Trim()
+    if ([string]::IsNullOrEmpty($val)) { return $Saved }
+    if ($val -eq '-') { return '' }
+    return $val
 }
 
 # -------------------------------------------------------------------------------
@@ -91,6 +102,49 @@ function Get-LatestRelease ([string]$Repo) {
         }
         throw "Failed to fetch release info for '$Repo': $_"
     }
+}
+
+# -------------------------------------------------------------------------------
+# Settings  (persists user choices across runs)
+# -------------------------------------------------------------------------------
+
+function Read-Settings {
+    $defaults = @{
+        ModelDir   = ''
+        ListenHost = 'localhost'
+        ListenPort = '8080'
+        Params     = @{
+            CtxVal = 65536; OutVal = 8192; FullGpu = $false
+            TempStr = ''; TopPStr = ''; TopKStr = ''
+            MinPStr = ''; RepPenStr = ''; PresPenStr = ''
+        }
+    }
+    if (-not (Test-Path $SettingsFile)) { return $defaults }
+    try {
+        $json = Get-Content $SettingsFile -Raw | ConvertFrom-Json
+        if ($json.ModelDir)   { $defaults.ModelDir   = $json.ModelDir }
+        if ($json.ListenHost) { $defaults.ListenHost = $json.ListenHost }
+        if ($json.ListenPort) { $defaults.ListenPort = $json.ListenPort }
+        if ($json.Params) {
+            $p = $json.Params
+            if ($null -ne $p.CtxVal)     { $defaults.Params.CtxVal     = [int]$p.CtxVal }
+            if ($null -ne $p.OutVal)     { $defaults.Params.OutVal     = [int]$p.OutVal }
+            if ($null -ne $p.FullGpu)    { $defaults.Params.FullGpu    = [bool]$p.FullGpu }
+            if ($null -ne $p.TempStr)    { $defaults.Params.TempStr    = [string]$p.TempStr }
+            if ($null -ne $p.TopPStr)    { $defaults.Params.TopPStr    = [string]$p.TopPStr }
+            if ($null -ne $p.TopKStr)    { $defaults.Params.TopKStr    = [string]$p.TopKStr }
+            if ($null -ne $p.MinPStr)    { $defaults.Params.MinPStr    = [string]$p.MinPStr }
+            if ($null -ne $p.RepPenStr)  { $defaults.Params.RepPenStr  = [string]$p.RepPenStr }
+            if ($null -ne $p.PresPenStr) { $defaults.Params.PresPenStr = [string]$p.PresPenStr }
+        }
+    } catch { }
+    return $defaults
+}
+
+function Save-Settings ([hashtable]$Updates) {
+    $current = Read-Settings
+    foreach ($key in $Updates.Keys) { $current[$key] = $Updates[$key] }
+    $current | ConvertTo-Json -Depth 5 | Set-Content -Path $SettingsFile -Encoding UTF8
 }
 
 # -------------------------------------------------------------------------------
@@ -379,7 +433,8 @@ function Install-Or-Update-LlamaCpp {
 function Select-ModelDirectory {
     Write-Section 'Model Directory'
 
-    $defaultDir = Join-Path $ScriptRoot 'models'
+    $saved      = Read-Settings
+    $defaultDir = if ($saved.ModelDir -and (Test-Path $saved.ModelDir)) { $saved.ModelDir } else { Join-Path $ScriptRoot 'models' }
 
     Write-Host '  Where are your .gguf model files located?' -ForegroundColor Cyan
     Write-Host '  Press Enter to use the default, or type a custom path.' -ForegroundColor DarkGray
@@ -410,29 +465,33 @@ function Select-ModelDirectory {
 # -------------------------------------------------------------------------------
 
 function Read-ModelParams {
-    $ctxStr = (Read-Host '  Context window size [65536]').Trim()
+    $d = (Read-Settings).Params
+
+    $ctxStr = (Read-Host "  Context window size [$($d.CtxVal)]").Trim()
     $ctxVal = 0
-    if (-not [int]::TryParse($ctxStr, [ref]$ctxVal) -or $ctxVal -le 0) { $ctxVal = 65536 }
+    if (-not [int]::TryParse($ctxStr, [ref]$ctxVal) -or $ctxVal -le 0) { $ctxVal = $d.CtxVal }
 
-    $outStr = (Read-Host '  Max output tokens for opencode [8192]').Trim()
+    $outStr = (Read-Host "  Max output tokens for opencode [$($d.OutVal)]").Trim()
     $outVal = 0
-    if (-not [int]::TryParse($outStr, [ref]$outVal) -or $outVal -le 0) { $outVal = 8192 }
+    if (-not [int]::TryParse($outStr, [ref]$outVal) -or $outVal -le 0) { $outVal = $d.OutVal }
 
-    $fullGpu    = Read-Confirm 'Load model fully on GPU (--gpu-layers 999)?'
-    $tempStr    = (Read-Host '  Temperature      (Enter to omit)').Trim()
-    $topPStr    = (Read-Host '  Top_P            (Enter to omit)').Trim()
-    $topKStr    = (Read-Host '  Top_K            (Enter to omit)').Trim()
-    $minPStr    = (Read-Host '  Min_P            (Enter to omit)').Trim()
-    $repPenStr  = (Read-Host '  Repeat Penalty   (Enter to omit)').Trim()
-    $presPenStr = (Read-Host '  Presence Penalty (Enter to omit)').Trim()
+    $fullGpu    = Read-Confirm 'Load model fully on GPU (--gpu-layers 999)?' -Default $d.FullGpu
+    $tempStr    = Read-OptionalParam 'Temperature     ' $d.TempStr
+    $topPStr    = Read-OptionalParam 'Top_P           ' $d.TopPStr
+    $topKStr    = Read-OptionalParam 'Top_K           ' $d.TopKStr
+    $minPStr    = Read-OptionalParam 'Min_P           ' $d.MinPStr
+    $repPenStr  = Read-OptionalParam 'Repeat Penalty  ' $d.RepPenStr
+    $presPenStr = Read-OptionalParam 'Presence Penalty' $d.PresPenStr
 
-    return @{
-        CtxVal     = $ctxVal;    OutVal     = $outVal
-        FullGpu    = $fullGpu;   TempStr    = $tempStr
-        TopPStr    = $topPStr;   TopKStr    = $topKStr
-        MinPStr    = $minPStr;   RepPenStr  = $repPenStr
+    $params = @{
+        CtxVal = $ctxVal;  OutVal      = $outVal
+        FullGpu = $fullGpu; TempStr    = $tempStr
+        TopPStr = $topPStr; TopKStr    = $topKStr
+        MinPStr = $minPStr; RepPenStr  = $repPenStr
         PresPenStr = $presPenStr
     }
+    Save-Settings @{ Params = $params }
+    return $params
 }
 
 function Build-ModelEntry ([string]$Name, [string]$ModelPath, [hashtable]$Params) {
@@ -503,11 +562,12 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
     Write-Host '  (This is where clients like opencode will connect.)' -ForegroundColor DarkGray
     Write-Host ''
 
-    $addr = (Read-Host '  Server host [localhost]').Trim()
-    if ([string]::IsNullOrEmpty($addr)) { $addr = 'localhost' }
+    $saved = Read-Settings
+    $addr  = (Read-Host "  Server host [$($saved.ListenHost)]").Trim()
+    if ([string]::IsNullOrEmpty($addr)) { $addr = $saved.ListenHost }
 
-    $port = (Read-Host '  Server port [8080]').Trim()
-    if ([string]::IsNullOrEmpty($port)) { $port = '8080' }
+    $port = (Read-Host "  Server port [$($saved.ListenPort)]").Trim()
+    if ([string]::IsNullOrEmpty($port)) { $port = $saved.ListenPort }
 
     $listenAddr    = "${addr}:${port}"
     $serverBaseUrl = "http://${addr}:${port}"
@@ -553,6 +613,8 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
 
     Write-SwapConfig -Models $models -ConfigPath $configPath
     Write-Ok "config.yaml written to $configPath"
+
+    Save-Settings @{ ModelDir = $ModelDir; ListenHost = $addr; ListenPort = $port }
 
     return @{
         Models        = $models
@@ -738,6 +800,9 @@ function Invoke-Scan {
         $modelDir = Select-ModelDirectory
         if (-not $modelDir) { return }
     }
+
+    # Persist the resolved model directory
+    Save-Settings @{ ModelDir = $modelDir }
 
     # Scan current .gguf files
     $ggufFiles    = @(Get-ChildItem -Path $modelDir -Filter '*.gguf' | Sort-Object Name)
