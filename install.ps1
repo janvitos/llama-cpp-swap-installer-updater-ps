@@ -308,41 +308,62 @@ function Get-CudartAsset ($Assets, [string]$CudaVersion) {
     } | Select-Object -First 1
 }
 
-function Show-BuildMenu ($Builds, [string]$CurrentBuild) {
-    Write-Host '  Available llama.cpp Windows builds:' -ForegroundColor Cyan
-    Write-Host ''
-
-    $i = 1
-    foreach ($b in $Builds) {
-        if ($b.name -match '^llama-[^-]+-bin-win-(.+)-x64\.zip$') {
-            $type = $Matches[1]
-        }
-        else {
-            $type = $b.name
-        }
-
-        $isCuda = $type -match '^cuda-'
-        $color  = if ($isCuda) { 'Green' } else { 'White' }
-
-        if ($type -eq $CurrentBuild) {
-            $marker = '  <- current'
-        }
-        else {
-            $marker = ''
-        }
-
-        Write-Host "  [$i] " -NoNewline -ForegroundColor DarkGray
-        Write-Host "$type$marker" -ForegroundColor $color
-        $i++
+function Select-Build ($Builds, [string]$CurrentBuild) {
+    # Resolve build type labels once
+    $labels = $Builds | ForEach-Object {
+        if ($_.name -match '^llama-[^-]+-bin-win-(.+)-x64\.zip$') { $Matches[1] } else { $_.name }
     }
 
+    # Pre-select the current build if present, otherwise 0
+    $cursor = 0
+    for ($i = 0; $i -lt $labels.Count; $i++) {
+        if ($labels[$i] -eq $CurrentBuild) { $cursor = $i; break }
+    }
+
+    Write-Host '  Available llama.cpp Windows builds:' -ForegroundColor Cyan
+    Write-Host '  Use arrow keys to select, Enter to confirm.' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Notes:' -ForegroundColor DarkGray
-    Write-Host '  * CUDA builds (green) require an NVIDIA GPU + matching CUDA Toolkit' -ForegroundColor DarkGray
+    Write-Host '  * CUDA builds (green) require an NVIDIA GPU' -ForegroundColor DarkGray
     Write-Host '  * avx2   -- recommended for most modern CPUs (Intel Haswell+ / AMD Ryzen)' -ForegroundColor DarkGray
     Write-Host '  * vulkan -- GPU acceleration via Vulkan; works on AMD, Intel, and NVIDIA' -ForegroundColor DarkGray
     Write-Host '  * avx    -- for older CPUs that lack AVX2 support' -ForegroundColor DarkGray
     Write-Host ''
+
+    $menuTop = $Host.UI.RawUI.CursorPosition.Y
+
+    function Draw-Menu ([int]$Selected) {
+        $pos = $Host.UI.RawUI.CursorPosition
+        $pos.Y = $menuTop
+        $Host.UI.RawUI.CursorPosition = $pos
+
+        for ($i = 0; $i -lt $labels.Count; $i++) {
+            $label   = $labels[$i]
+            $isCuda  = $label -match '^cuda-'
+            $marker  = if ($label -eq $CurrentBuild) { '  <- current' } else { '' }
+
+            if ($i -eq $Selected) {
+                Write-Host "  > $label$marker" -ForegroundColor $(if ($isCuda) { 'Green' } else { 'White' })
+            }
+            else {
+                Write-Host "    $label$marker" -ForegroundColor $(if ($isCuda) { 'DarkGreen' } else { 'DarkGray' })
+            }
+        }
+    }
+
+    # Reserve lines for the menu
+    for ($i = 0; $i -lt $labels.Count; $i++) { Write-Host '' }
+
+    Draw-Menu $cursor
+
+    while ($true) {
+        $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        switch ($key.VirtualKeyCode) {
+            38 { if ($cursor -gt 0)                    { $cursor--; Draw-Menu $cursor } }  # Up
+            40 { if ($cursor -lt $labels.Count - 1)    { $cursor++; Draw-Menu $cursor } }  # Down
+            13 { Write-Host ''; return @{ Asset = $Builds[$cursor]; Type = $labels[$cursor] } }  # Enter
+        }
+    }
 }
 
 function Install-Or-Update-LlamaCpp {
@@ -368,22 +389,9 @@ function Install-Or-Update-LlamaCpp {
     $builds = Get-WindowsBuilds -Assets $rel.assets
     if ($builds.Count -eq 0) { throw "No Windows builds found for llama.cpp $latest." }
 
-    Show-BuildMenu -Builds $builds -CurrentBuild $currentBuild
-
-    $idx = 0
-    do {
-        $selection = (Read-Host "  Select build [1-$($builds.Count)]").Trim()
-        [int]::TryParse($selection, [ref]$idx) | Out-Null
-    } while ($idx -lt 1 -or $idx -gt $builds.Count)
-
-    $selected = $builds[$idx - 1]
-
-    if ($selected.name -match '^llama-[^-]+-bin-win-(.+)-x64\.zip$') {
-        $buildType = $Matches[1]
-    }
-    else {
-        $buildType = $selected.name
-    }
+    $choice    = Select-Build -Builds $builds -CurrentBuild $currentBuild
+    $selected  = $choice.Asset
+    $buildType = $choice.Type
 
     # Download main binary zip
     $zip = Join-Path $DownloadDir $selected.name
