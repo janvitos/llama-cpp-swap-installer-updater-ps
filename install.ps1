@@ -309,12 +309,10 @@ function Get-CudartAsset ($Assets, [string]$CudaVersion) {
 }
 
 function Select-Build ($Builds, [string]$CurrentBuild) {
-    # Resolve build type labels once
     $labels = $Builds | ForEach-Object {
         if ($_.name -match '^llama-[^-]+-bin-win-(.+)-x64\.zip$') { $Matches[1] } else { $_.name }
     }
 
-    # Pre-select the current build if present, otherwise 0
     $cursor = 0
     for ($i = 0; $i -lt $labels.Count; $i++) {
         if ($labels[$i] -eq $CurrentBuild) { $cursor = $i; break }
@@ -330,38 +328,52 @@ function Select-Build ($Builds, [string]$CurrentBuild) {
     Write-Host '  * avx    -- for older CPUs that lack AVX2 support' -ForegroundColor DarkGray
     Write-Host ''
 
-    $menuTop = $Host.UI.RawUI.CursorPosition.Y
+    $esc     = [char]27
+    $maxLen  = ($labels | ForEach-Object {
+        $marker = if ($_ -eq $CurrentBuild) { '  <- current' } else { '' }
+        "  $_$marker".Length
+    } | Measure-Object -Maximum).Maximum + 4  # 4 chars right-padding
 
     function Draw-Menu ([int]$Selected) {
-        $pos = $Host.UI.RawUI.CursorPosition
-        $pos.Y = $menuTop
-        $Host.UI.RawUI.CursorPosition = $pos
-
         for ($i = 0; $i -lt $labels.Count; $i++) {
-            $label   = $labels[$i]
-            $isCuda  = $label -match '^cuda-'
-            $marker  = if ($label -eq $CurrentBuild) { '  <- current' } else { '' }
+            $label  = $labels[$i]
+            $isCuda = $label -match '^cuda-'
+            $marker = if ($label -eq $CurrentBuild) { '  <- current' } else { '' }
+            $text   = "  $label$marker".PadRight($maxLen)
 
             if ($i -eq $Selected) {
-                Write-Host "  > $label$marker" -ForegroundColor $(if ($isCuda) { 'Green' } else { 'White' })
-            }
-            else {
-                Write-Host "    $label$marker" -ForegroundColor $(if ($isCuda) { 'DarkGreen' } else { 'DarkGray' })
+                Write-Host $text -BackgroundColor DarkGreen -ForegroundColor White
+            } elseif ($isCuda) {
+                Write-Host $text -ForegroundColor DarkGreen
+            } else {
+                Write-Host $text -ForegroundColor DarkGray
             }
         }
     }
-
-    # Reserve lines for the menu
-    for ($i = 0; $i -lt $labels.Count; $i++) { Write-Host '' }
 
     Draw-Menu $cursor
 
     while ($true) {
         $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         switch ($key.VirtualKeyCode) {
-            38 { if ($cursor -gt 0)                    { $cursor--; Draw-Menu $cursor } }  # Up
-            40 { if ($cursor -lt $labels.Count - 1)    { $cursor++; Draw-Menu $cursor } }  # Down
-            13 { Write-Host ''; return @{ Asset = $Builds[$cursor]; Type = $labels[$cursor] } }  # Enter
+            38 {  # Up
+                if ($cursor -gt 0) {
+                    $cursor--
+                    [Console]::Write("$esc[$($labels.Count)A")
+                    Draw-Menu $cursor
+                }
+            }
+            40 {  # Down
+                if ($cursor -lt $labels.Count - 1) {
+                    $cursor++
+                    [Console]::Write("$esc[$($labels.Count)A")
+                    Draw-Menu $cursor
+                }
+            }
+            13 {  # Enter
+                Write-Host ''
+                return @{ Asset = $Builds[$cursor]; Type = $labels[$cursor] }
+            }
         }
     }
 }
