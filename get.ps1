@@ -11,7 +11,7 @@
 # -------------------------------------------------------------------------------
 # UPDATE THIS to your actual GitHub raw base URL before publishing
 # -------------------------------------------------------------------------------
-$RepoRaw = 'https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main'
+$RepoRaw = 'https://raw.githubusercontent.com/janvitos/llama-cpp-swap-installer-updater-ps/main'
 # -------------------------------------------------------------------------------
 
 $sep = '-' * 60
