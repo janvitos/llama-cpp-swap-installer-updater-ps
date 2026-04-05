@@ -1,6 +1,6 @@
-# llama-swap + llama.cpp Installer / Updater
+# llama.cpp + llama-swap Installer / Updater
 
-A PowerShell wizard that downloads, installs, and configures [llama-swap](https://github.com/mostlygeek/llama-swap) and [llama.cpp](https://github.com/ggml-org/llama.cpp) on Windows — and keeps them up to date with a single command.
+A PowerShell wizard that downloads, installs, and configures [llama.cpp](https://github.com/ggml-org/llama.cpp) and [llama-swap](https://github.com/mostlygeek/llama-swap) on Windows — and keeps them up to date with a single command.
 
 ---
 
@@ -8,7 +8,7 @@ A PowerShell wizard that downloads, installs, and configures [llama-swap](https:
 
 **First run** — walks you through a full setup wizard:
 
-- Downloads the latest **llama-swap** and **llama.cpp** Windows binaries from GitHub Releases
+- Downloads the latest **llama.cpp** and **llama-swap** Windows binaries from GitHub Releases
 - Lets you choose a llama.cpp build (AVX2, AVX, Vulkan, CUDA, ...)
 - Scans a folder of your choice for `.gguf` model files
 - Generates a `config.yaml` for llama-swap with a `llama-server` command for each model
@@ -57,7 +57,7 @@ You will be prompted for an install directory (default: `%USERPROFILE%\llama-ins
 
 ## Updating
 
-Re-run `install.bat` (or `install.ps1`) at any time. If the installation is already configured, the script runs in **update-only mode** — it checks for new releases of llama-swap and llama.cpp and downloads them if available, then exits silently.
+Re-run `install.bat` (or `install.ps1`) at any time. If the installation is already configured, the script runs in **update-only mode** — it checks for new releases of llama.cpp and llama-swap and downloads them if available, then exits silently.
 
 ---
 
