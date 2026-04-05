@@ -1009,7 +1009,8 @@ function Main {
         Write-Section 'Done'
         Write-Ok 'Model scan complete.'
         Write-Host ''
-        Read-Host '  Press Enter to exit...'
+        Write-Host '  Press Enter to exit...' -NoNewline
+$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         return
     }
 
@@ -1118,7 +1119,8 @@ function Main {
     Write-Host '  llama-swap will listen on the address/port you configured' -ForegroundColor DarkGray
     Write-Host '  and automatically start/stop llama.cpp backends per request.' -ForegroundColor DarkGray
     Write-Host ''
-    Read-Host '  Press Enter to exit...'
+    Write-Host '  Press Enter to exit...' -NoNewline
+$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 }
 
 Main
