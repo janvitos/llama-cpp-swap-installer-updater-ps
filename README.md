@@ -28,7 +28,7 @@ A PowerShell wizard that downloads, installs, and configures [llama.cpp](https:/
 - Internet connection (for downloading binaries from GitHub)
 - `.gguf` model files (if you want to configure llama-swap)
 
-> For CUDA builds of llama.cpp: an NVIDIA GPU and the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) installed.
+> For CUDA builds of llama.cpp: an NVIDIA GPU with up-to-date drivers is required. The necessary CUDA runtime DLLs are downloaded automatically alongside the build — no separate CUDA Toolkit installation needed.
 
 ---
 
