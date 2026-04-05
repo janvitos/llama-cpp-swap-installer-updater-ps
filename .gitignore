@@ -1,3 +1,4 @@
 .claude/
-.llama.cpp/
-.llama-swap/
+llama.cpp/
+llama-swap/
+start-llama-swap.bat
