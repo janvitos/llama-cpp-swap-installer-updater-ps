@@ -114,7 +114,7 @@ function Read-Settings {
         ListenHost = 'localhost'
         ListenPort = '8080'
         Params     = @{
-            CtxVal = 65536; OutVal = 8192; FullGpu = $false
+            CtxVal = 65536; OutVal = 8192; FullGpu = $true
             TempStr = ''; TopPStr = ''; TopKStr = ''
             MinPStr = ''; RepPenStr = ''; PresPenStr = ''
         }
@@ -688,7 +688,7 @@ $modelsBlock
 
 function Parse-CmdString ([string]$Cmd) {
     $p = @{
-        CtxVal = 65536; OutVal = 8192; FullGpu = $false
+        CtxVal = 65536; OutVal = 8192; FullGpu = $true
         TempStr = ''; TopPStr = ''; TopKStr = ''
         MinPStr = ''; RepPenStr = ''; PresPenStr = ''
     }
@@ -920,7 +920,7 @@ function Register-UpdateTask {
     $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
     # Build the task XML directly so every setting is explicit.
-    # LogonType S4U  = "Run whether user is logged on or not" + "Do not store password"
+    # LogonType InteractiveToken = runs only when the user is already logged on (no admin/UAC needed)
     # StartWhenAvailable = "Run as soon as possible after a scheduled start is missed"
     # AllowHardTerminate = "If the running task does not end when requested, force it to stop"
     # DisallowStartIfOnBatteries / StopIfGoingOnBatteries = false (AC-power restriction disabled)
@@ -942,7 +942,7 @@ function Register-UpdateTask {
   <Principals>
     <Principal id="Author">
       <UserId>$currentUser</UserId>
-      <LogonType>S4U</LogonType>
+      <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
@@ -962,7 +962,7 @@ function Register-UpdateTask {
     <Hidden>false</Hidden>
     <RunOnlyIfIdle>false</RunOnlyIfIdle>
     <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author">
@@ -978,8 +978,9 @@ function Register-UpdateTask {
     [System.IO.File]::WriteAllText($tmpXml, $xml, [System.Text.Encoding]::Unicode)
 
     try {
-        $out = schtasks.exe /Create /TN $taskName /XML $tmpXml /F 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $out      = schtasks.exe /Create /TN $taskName /XML $tmpXml /F 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
             Write-Warn "Failed to create scheduled task: $out"
             return
         }
@@ -1008,7 +1009,7 @@ function Main {
         Write-Section 'Done'
         Write-Ok 'Model scan complete.'
         Write-Host ''
-        Read-Host '  Press Enter to exit'
+        Read-Host '  Press Enter to exit...'
         return
     }
 
@@ -1117,7 +1118,7 @@ function Main {
     Write-Host '  llama-swap will listen on the address/port you configured' -ForegroundColor DarkGray
     Write-Host '  and automatically start/stop llama.cpp backends per request.' -ForegroundColor DarkGray
     Write-Host ''
-    Read-Host '  Press Enter to exit'
+    Read-Host '  Press Enter to exit...'
 }
 
 Main

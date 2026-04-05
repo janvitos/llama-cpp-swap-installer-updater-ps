@@ -95,7 +95,7 @@ Or in PowerShell:
 
 ## 🕐 Automatic Updates
 
-At the end of the setup wizard, you will be offered the option to create a **Windows Task Scheduler** task that runs the updater silently in the background — once daily (at 03:00) and at every login. The task runs whether or not you are logged in and does not store your password.
+At the end of the setup wizard, you will be offered the option to create a **Windows Task Scheduler** task that runs the updater silently in the background — once daily (at 03:00) and at every login. No administrator rights are required.
 
 To remove the task later, open **Task Scheduler** and delete the task named `llama-cpp-swap-updater`, or run:
 
