@@ -901,6 +901,96 @@ function Invoke-Scan {
 # Main
 # -------------------------------------------------------------------------------
 
+function Register-UpdateTask {
+    $taskName   = 'llama-cpp-swap-updater'
+    $scriptPath = Join-Path $ScriptRoot 'install.ps1'
+
+    $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($existing) {
+        $recreate = Read-Confirm 'A scheduled update task already exists. Recreate it?' -Default $false
+        if (-not $recreate) { return }
+    }
+    else {
+        $create = Read-Confirm 'Create a scheduled task to run the updater silently daily and at login?'
+        if (-not $create) { return }
+    }
+
+    Write-Do 'Registering scheduled task...'
+
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+    # Build the task XML directly so every setting is explicit.
+    # LogonType S4U  = "Run whether user is logged on or not" + "Do not store password"
+    # StartWhenAvailable = "Run as soon as possible after a scheduled start is missed"
+    # AllowHardTerminate = "If the running task does not end when requested, force it to stop"
+    # DisallowStartIfOnBatteries / StopIfGoingOnBatteries = false (AC-power restriction disabled)
+    $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Silently checks for and installs updates to llama.cpp and llama-swap.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2000-01-01T03:00:00</StartBoundary>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
+    <LogonTrigger>
+      <UserId>$currentUser</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$currentUser</UserId>
+      <LogonType>S4U</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$scriptPath"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
+    $tmpXml = Join-Path $env:TEMP 'llama-updater-task.xml'
+    [System.IO.File]::WriteAllText($tmpXml, $xml, [System.Text.Encoding]::Unicode)
+
+    try {
+        $out = schtasks.exe /Create /TN $taskName /XML $tmpXml /F 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Failed to create scheduled task: $out"
+            return
+        }
+    }
+    finally {
+        Remove-Item $tmpXml -ErrorAction SilentlyContinue
+    }
+
+    Write-Ok "Scheduled task '$taskName' created (daily at 03:00 + at login)."
+}
+
 function Main {
     Write-Banner
 
@@ -997,6 +1087,10 @@ function Main {
             if (-not $remaining) { Remove-Item $DownloadDir -Force -ErrorAction SilentlyContinue }
         }
     }
+
+    # 7. Optional: scheduled auto-update task
+    Write-Host ''
+    Register-UpdateTask
 
     # Summary
     Write-Section 'Done'

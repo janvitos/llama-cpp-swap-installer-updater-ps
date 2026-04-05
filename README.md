@@ -93,6 +93,18 @@ Or in PowerShell:
 
 ---
 
+## 🕐 Automatic Updates
+
+At the end of the setup wizard, you will be offered the option to create a **Windows Task Scheduler** task that runs the updater silently in the background — once daily (at 03:00) and at every login. The task runs whether or not you are logged in and does not store your password.
+
+To remove the task later, open **Task Scheduler** and delete the task named `llama-cpp-swap-updater`, or run:
+
+```powershell
+Unregister-ScheduledTask -TaskName 'llama-cpp-swap-updater' -Confirm:$false
+```
+
+---
+
 ## 💾 Saved Settings
 
 After the first run, all your choices (install directory, model folder, listen host/port, and all model parameters) are saved to `settings.json` in the install directory. Subsequent runs — including `--reconfigure` and `--scan` — pre-fill every prompt with your previous values so you only need to press Enter to keep them.
