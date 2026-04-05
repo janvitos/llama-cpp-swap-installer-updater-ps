@@ -77,6 +77,22 @@ Or in PowerShell:
 
 ---
 
+## 🔍 Rescanning Models
+
+When you add or remove `.gguf` files, regenerate `config.yaml` and `opencode.json` without touching the binaries:
+
+```bat
+install.bat --scan
+```
+
+Or in PowerShell:
+
+```powershell
+.\install.ps1 -Scan
+```
+
+---
+
 ## 📁 Directory Layout
 
 After a full install, your chosen directory will look like this:

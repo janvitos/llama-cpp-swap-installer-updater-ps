@@ -10,15 +10,20 @@
     binary updates -- no prompts, safe to use as a scheduled update task.
 
     Use -Reconfigure to force the full wizard to run again.
+    Use -Scan to update config.yaml and opencode.json without touching the binaries.
 
     Directories created:
       <script_root>\llama-swap\   - llama-swap binary + config
       <script_root>\llama.cpp\    - llama.cpp binaries (+ CUDA runtime if applicable)
 .PARAMETER Reconfigure
     Force the full configuration wizard even if the installation is already complete.
+.PARAMETER Rescan
+    Re-scan the model directory and regenerate config.yaml and opencode.json without
+    downloading or updating any binaries.
 #>
 param(
-    [switch]$Reconfigure
+    [switch]$Reconfigure,
+    [switch]$Scan
 )
 
 Set-StrictMode -Version Latest
@@ -372,6 +377,68 @@ function Select-ModelDirectory {
 }
 
 # -------------------------------------------------------------------------------
+# Parameter helpers  (shared between config wizard and --scan)
+# -------------------------------------------------------------------------------
+
+function Read-ModelParams {
+    $ctxStr = (Read-Host '  Context window size [65536]').Trim()
+    $ctxVal = 0
+    if (-not [int]::TryParse($ctxStr, [ref]$ctxVal) -or $ctxVal -le 0) { $ctxVal = 65536 }
+
+    $outStr = (Read-Host '  Max output tokens for opencode [8192]').Trim()
+    $outVal = 0
+    if (-not [int]::TryParse($outStr, [ref]$outVal) -or $outVal -le 0) { $outVal = 8192 }
+
+    $fullGpu    = Read-Confirm 'Load model fully on GPU (--gpu-layers 999)?'
+    $tempStr    = (Read-Host '  Temperature      (Enter to omit)').Trim()
+    $topPStr    = (Read-Host '  Top_P            (Enter to omit)').Trim()
+    $topKStr    = (Read-Host '  Top_K            (Enter to omit)').Trim()
+    $minPStr    = (Read-Host '  Min_P            (Enter to omit)').Trim()
+    $repPenStr  = (Read-Host '  Repeat Penalty   (Enter to omit)').Trim()
+    $presPenStr = (Read-Host '  Presence Penalty (Enter to omit)').Trim()
+
+    return @{
+        CtxVal     = $ctxVal;    OutVal     = $outVal
+        FullGpu    = $fullGpu;   TempStr    = $tempStr
+        TopPStr    = $topPStr;   TopKStr    = $topKStr
+        MinPStr    = $minPStr;   RepPenStr  = $repPenStr
+        PresPenStr = $presPenStr
+    }
+}
+
+function Build-ModelEntry ([string]$Name, [string]$ModelPath, [hashtable]$Params) {
+    $llamaServerExe = Join-Path $LlamaCppDir 'llama-server.exe'
+    $cmd = "$llamaServerExe -m `"$ModelPath`" --port `${PORT} --ctx-size $($Params.CtxVal) --jinja --flash-attn on"
+    if ($Params.FullGpu)                                         { $cmd += ' --gpu-layers 999' }
+    if (-not [string]::IsNullOrEmpty($Params.TempStr))          { $cmd += " --temp $($Params.TempStr)" }
+    if (-not [string]::IsNullOrEmpty($Params.TopPStr))          { $cmd += " --top-p $($Params.TopPStr)" }
+    if (-not [string]::IsNullOrEmpty($Params.TopKStr))          { $cmd += " --top-k $($Params.TopKStr)" }
+    if (-not [string]::IsNullOrEmpty($Params.MinPStr))          { $cmd += " --min-p $($Params.MinPStr)" }
+    if (-not [string]::IsNullOrEmpty($Params.RepPenStr))        { $cmd += " --repeat-penalty $($Params.RepPenStr)" }
+    if (-not [string]::IsNullOrEmpty($Params.PresPenStr))       { $cmd += " --presence-penalty $($Params.PresPenStr)" }
+    return @{ Name = $Name; Cmd = $cmd; ContextLimit = $Params.CtxVal; OutputLimit = $Params.OutVal }
+}
+
+function Write-SwapConfig ([System.Collections.Generic.List[hashtable]]$Models, [string]$ConfigPath) {
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine('healthCheckTimeout: 60')
+    [void]$sb.AppendLine('globalTTL: 600')
+    [void]$sb.AppendLine('startPort: 8081')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('models:')
+    if ($Models.Count -eq 0) {
+        [void]$sb.AppendLine('  # No models defined.')
+    } else {
+        foreach ($m in $Models) {
+            $yamlCmd = $m.Cmd -replace "'", "''"
+            [void]$sb.AppendLine("  $($m.Name):")
+            [void]$sb.AppendLine("    cmd: '$yamlCmd'")
+        }
+    }
+    Set-Content -Path $ConfigPath -Value $sb.ToString() -Encoding UTF8
+}
+
+# -------------------------------------------------------------------------------
 # llama-swap  config.yaml
 # -------------------------------------------------------------------------------
 
@@ -416,9 +483,6 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
     $listenAddr    = "${addr}:${port}"
     $serverBaseUrl = "http://${addr}:${port}"
 
-    # Configure each discovered model
-    $llamaServerExe = Join-Path $LlamaCppDir 'llama-server.exe'
-
     Write-Host ''
     Write-Host '  Configure each model. Press Enter on optional fields to omit the flag.' -ForegroundColor Cyan
     Write-Host ''
@@ -426,128 +490,39 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
     $models = [System.Collections.Generic.List[hashtable]]::new()
     $total  = $ggufFiles.Count
 
-    # Ask once whether to share parameters across all models
     $sharedParams = $null
     if ($total -gt 1) {
         Write-Host ''
-        $useShared = Read-Confirm 'Use the same parameters for all models?'
-        if ($useShared) {
+        if (Read-Confirm 'Use the same parameters for all models?') {
             Write-Host ''
             Write-Host '  -- Shared parameters (applied to all models) --' -ForegroundColor Yellow
             Write-Host ''
-
-            $sCtxStr = (Read-Host '  Context window size [65536]').Trim()
-            $sCtxVal = 0
-            if (-not [int]::TryParse($sCtxStr, [ref]$sCtxVal) -or $sCtxVal -le 0) { $sCtxVal = 65536 }
-
-            $sOutStr = (Read-Host '  Max output tokens for opencode [8192]').Trim()
-            $sOutVal = 0
-            if (-not [int]::TryParse($sOutStr, [ref]$sOutVal) -or $sOutVal -le 0) { $sOutVal = 8192 }
-
-            $sFullGpu    = Read-Confirm 'Load all models fully on GPU (--gpu-layers 999)?'
-            $sTempStr    = (Read-Host '  Temperature      (Enter to omit)').Trim()
-            $sTopPStr    = (Read-Host '  Top_P            (Enter to omit)').Trim()
-            $sTopKStr    = (Read-Host '  Top_K            (Enter to omit)').Trim()
-            $sMinPStr    = (Read-Host '  Min_P            (Enter to omit)').Trim()
-            $sRepPenStr  = (Read-Host '  Repeat Penalty   (Enter to omit)').Trim()
-            $sPresPenStr = (Read-Host '  Presence Penalty (Enter to omit)').Trim()
-
-            $sharedParams = @{
-                CtxVal   = $sCtxVal;  OutVal      = $sOutVal
-                FullGpu  = $sFullGpu; TempStr     = $sTempStr
-                TopPStr  = $sTopPStr; TopKStr     = $sTopKStr
-                MinPStr  = $sMinPStr; RepPenStr   = $sRepPenStr
-                PresPenStr = $sPresPenStr
-            }
+            $sharedParams = Read-ModelParams
             Write-Host ''
         }
     }
 
     $idx = 1
     foreach ($file in $ggufFiles) {
-        $name      = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-        $modelPath = $file.FullName
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
 
         Write-Host "  -- Model $idx/$total : $name" -ForegroundColor Yellow
         Write-Host ''
 
-        if ($sharedParams) {
-            # Use the shared parameters collected above
-            $ctxVal     = $sharedParams.CtxVal
-            $outVal     = $sharedParams.OutVal
-            $fullGpu    = $sharedParams.FullGpu
-            $tempStr    = $sharedParams.TempStr
-            $topPStr    = $sharedParams.TopPStr
-            $topKStr    = $sharedParams.TopKStr
-            $minPStr    = $sharedParams.MinPStr
-            $repPenStr  = $sharedParams.RepPenStr
-            $presPenStr = $sharedParams.PresPenStr
-        }
-        else {
-            # Prompt individually for this model
-            $ctxStr = (Read-Host '  Context window size [65536]').Trim()
-            $ctxVal = 0
-            if (-not [int]::TryParse($ctxStr, [ref]$ctxVal) -or $ctxVal -le 0) { $ctxVal = 65536 }
-
-            $outStr = (Read-Host '  Max output tokens for opencode [8192]').Trim()
-            $outVal = 0
-            if (-not [int]::TryParse($outStr, [ref]$outVal) -or $outVal -le 0) { $outVal = 8192 }
-
-            $fullGpu    = Read-Confirm 'Load model fully on GPU (--gpu-layers 999)?'
-            $tempStr    = (Read-Host '  Temperature      (Enter to omit)').Trim()
-            $topPStr    = (Read-Host '  Top_P            (Enter to omit)').Trim()
-            $topKStr    = (Read-Host '  Top_K            (Enter to omit)').Trim()
-            $minPStr    = (Read-Host '  Min_P            (Enter to omit)').Trim()
-            $repPenStr  = (Read-Host '  Repeat Penalty   (Enter to omit)').Trim()
-            $presPenStr = (Read-Host '  Presence Penalty (Enter to omit)').Trim()
-        }
-
-        # Build the launch command
-        $cmd = "$llamaServerExe -m `"$modelPath`" --port `${PORT} --ctx-size $ctxVal --jinja --flash-attn on"
-
-        if ($fullGpu)                                    { $cmd += ' --gpu-layers 999' }
-        if (-not [string]::IsNullOrEmpty($tempStr))      { $cmd += " --temp $tempStr" }
-        if (-not [string]::IsNullOrEmpty($topPStr))      { $cmd += " --top-p $topPStr" }
-        if (-not [string]::IsNullOrEmpty($topKStr))      { $cmd += " --top-k $topKStr" }
-        if (-not [string]::IsNullOrEmpty($minPStr))      { $cmd += " --min-p $minPStr" }
-        if (-not [string]::IsNullOrEmpty($repPenStr))    { $cmd += " --repeat-penalty $repPenStr" }
-        if (-not [string]::IsNullOrEmpty($presPenStr))   { $cmd += " --presence-penalty $presPenStr" }
-
-        $models.Add(@{ Name = $name; Cmd = $cmd; ContextLimit = $ctxVal; OutputLimit = $outVal })
+        $entryParams = if ($sharedParams) { $sharedParams } else { Read-ModelParams }
+        $entry = Build-ModelEntry -Name $name -ModelPath $file.FullName -Params $entryParams
+        $models.Add($entry)
         Write-Ok "Configured: $name"
-        Write-Info "  cmd: $cmd"
+        Write-Info "  cmd: $($entry.Cmd)"
         Write-Host ''
         $idx++
-    }
-
-    # Build the YAML manually (avoids requiring a YAML module)
-    $sb = [System.Text.StringBuilder]::new()
-    [void]$sb.AppendLine('healthCheckTimeout: 60')
-    [void]$sb.AppendLine('globalTTL: 600')
-    [void]$sb.AppendLine('startPort: 8081')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('models:')
-
-    if ($models.Count -eq 0) {
-        [void]$sb.AppendLine('  # No models defined -- add entries like the example below:')
-        [void]$sb.AppendLine('  # my-model:')
-        $exampleCmd = "$LlamaCppDir\llama-server.exe -m `"C:\models\model.gguf`" --port `${PORT} --ctx-size 65536 --jinja --flash-attn on --gpu-layers 999"
-        [void]$sb.AppendLine("  #   cmd: '$exampleCmd'")
-    }
-    else {
-        foreach ($m in $models) {
-            # YAML single-quoted strings: escape any literal single quotes by doubling them
-            $yamlCmd = $m.Cmd -replace "'", "''"
-            [void]$sb.AppendLine("  $($m.Name):")
-            [void]$sb.AppendLine("    cmd: '$yamlCmd'")
-        }
     }
 
     if (-not (Test-Path $LlamaSwapDir)) {
         New-Item -ItemType Directory -Path $LlamaSwapDir -Force | Out-Null
     }
 
-    Set-Content -Path $configPath -Value $sb.ToString() -Encoding UTF8
+    Write-SwapConfig -Models $models -ConfigPath $configPath
     Write-Ok "config.yaml written to $configPath"
 
     return @{
@@ -617,6 +592,218 @@ $modelsBlock
 }
 
 # -------------------------------------------------------------------------------
+# Scan helpers
+# -------------------------------------------------------------------------------
+
+function Parse-CmdString ([string]$Cmd) {
+    $p = @{
+        CtxVal = 65536; OutVal = 8192; FullGpu = $false
+        TempStr = ''; TopPStr = ''; TopKStr = ''
+        MinPStr = ''; RepPenStr = ''; PresPenStr = ''
+    }
+    if ($Cmd -match '--ctx-size\s+(\d+)')            { $p.CtxVal     = [int]$Matches[1] }
+    if ($Cmd -match '--gpu-layers\s+999')            { $p.FullGpu    = $true }
+    if ($Cmd -match '--temp\s+([\d.]+)')             { $p.TempStr    = $Matches[1] }
+    if ($Cmd -match '--top-p\s+([\d.]+)')            { $p.TopPStr    = $Matches[1] }
+    if ($Cmd -match '--top-k\s+(\d+)')               { $p.TopKStr    = $Matches[1] }
+    if ($Cmd -match '--min-p\s+([\d.]+)')            { $p.MinPStr    = $Matches[1] }
+    if ($Cmd -match '--repeat-penalty\s+([\d.]+)')   { $p.RepPenStr  = $Matches[1] }
+    if ($Cmd -match '--presence-penalty\s+([\d.]+)') { $p.PresPenStr = $Matches[1] }
+    return $p
+}
+
+function Read-ConfigModels {
+    $configPath = Join-Path $LlamaSwapDir 'config.yaml'
+    $result = @{}
+    if (-not (Test-Path $configPath)) { return $result }
+    $lines = Get-Content $configPath
+    $currentModel = $null
+    foreach ($line in $lines) {
+        if ($line -match '^  ([^#][^:]*):$') {
+            $currentModel = $Matches[1].Trim()
+        } elseif ($currentModel -and $line -match "^    cmd:\s+'(.*)'$") {
+            $result[$currentModel] = $Matches[1] -replace "''", "'"
+            $currentModel = $null
+        }
+    }
+    return $result
+}
+
+function Read-OpencodeModels {
+    $opencodeFile = Join-Path $env:USERPROFILE '.config\opencode\opencode.json'
+    $result = @{}
+    if (-not (Test-Path $opencodeFile)) { return $result }
+    try {
+        $json     = Get-Content $opencodeFile -Raw | ConvertFrom-Json
+        $provider = $json.provider.'llama-swap'
+        if ($provider -and $provider.models) {
+            $provider.models.PSObject.Properties | ForEach-Object {
+                $result[$_.Name] = @{
+                    Context = [int]$_.Value.limit.context
+                    Output  = [int]$_.Value.limit.output
+                }
+            }
+        }
+    } catch { }
+    return $result
+}
+
+function Read-ExistingListenAddr {
+    $batFile = Join-Path $ScriptRoot 'start-llama-swap.bat'
+    if (Test-Path $batFile) {
+        $content = Get-Content $batFile -Raw
+        if ($content -match '--listen\s+(\S+)') { return $Matches[1] }
+    }
+    return 'localhost:8080'
+}
+
+function Show-DefaultParams ([hashtable]$Params) {
+    Write-Host '  Default parameters (from existing models):' -ForegroundColor Cyan
+    Write-Host "    Context window : $($Params.CtxVal)" -ForegroundColor White
+    Write-Host "    Max output     : $($Params.OutVal)" -ForegroundColor White
+    $gpuLabel = if ($Params.FullGpu) { 'Yes (--gpu-layers 999)' } else { 'No' }
+    Write-Host "    GPU offload    : $gpuLabel" -ForegroundColor White
+    $samplers = @()
+    if ($Params.TempStr)    { $samplers += "temp=$($Params.TempStr)" }
+    if ($Params.TopPStr)    { $samplers += "top_p=$($Params.TopPStr)" }
+    if ($Params.TopKStr)    { $samplers += "top_k=$($Params.TopKStr)" }
+    if ($Params.MinPStr)    { $samplers += "min_p=$($Params.MinPStr)" }
+    if ($Params.RepPenStr)  { $samplers += "repeat_penalty=$($Params.RepPenStr)" }
+    if ($Params.PresPenStr) { $samplers += "presence_penalty=$($Params.PresPenStr)" }
+    $samplerLine = if ($samplers.Count -gt 0) { $samplers -join ', ' } else { '(defaults)' }
+    Write-Host "    Sampling       : $samplerLine" -ForegroundColor White
+    Write-Host ''
+}
+
+function Invoke-Scan {
+    Write-Section 'Model Scan'
+
+    $existingCmds   = Read-ConfigModels
+    $existingLimits = Read-OpencodeModels
+    $listenAddr     = Read-ExistingListenAddr
+    $serverBaseUrl  = "http://$listenAddr"
+
+    # Infer model directory from the existing config, let user confirm or change
+    $inferredDir = $null
+    foreach ($cmd in $existingCmds.Values) {
+        if ($cmd -match '-m\s+"([^"]+)"') {
+            $inferredDir = Split-Path -Parent $Matches[1]
+            break
+        }
+    }
+
+    if ($inferredDir -and (Test-Path $inferredDir)) {
+        Write-Host '  Previously configured model directory:' -ForegroundColor Cyan
+        Write-Host "    $inferredDir" -ForegroundColor White
+        Write-Host ''
+        if (Read-Confirm 'Scan this directory?') {
+            $modelDir = $inferredDir
+        } else {
+            $modelDir = (Read-Host '  Enter model directory path (or Enter to cancel)').Trim()
+            if ([string]::IsNullOrEmpty($modelDir) -or -not (Test-Path $modelDir)) {
+                Write-Info 'Scan cancelled.'
+                return
+            }
+        }
+    } else {
+        $modelDir = Select-ModelDirectory
+        if (-not $modelDir) { return }
+    }
+
+    # Scan current .gguf files
+    $ggufFiles    = @(Get-ChildItem -Path $modelDir -Filter '*.gguf' | Sort-Object Name)
+    $currentNames = @($ggufFiles | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
+
+    # Compute diff
+    $existingNames  = @($existingCmds.Keys)
+    $removedNames   = @($existingNames | Where-Object { $_ -notin $currentNames })
+    $addedFiles     = @($ggufFiles    | Where-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) -notin $existingNames })
+    $unchangedNames = @($existingNames | Where-Object { $_ -in $currentNames })
+
+    Write-Host ''
+    Write-Info "Models found : $($ggufFiles.Count)"
+    if ($removedNames.Count -gt 0) {
+        Write-Warn "Removed ($($removedNames.Count)): $($removedNames -join ', ')"
+    }
+    if ($addedFiles.Count -gt 0) {
+        Write-Do "Added ($($addedFiles.Count)): $(($addedFiles | ForEach-Object { $_.BaseName }) -join ', ')"
+    }
+    if ($removedNames.Count -eq 0 -and $addedFiles.Count -eq 0) {
+        Write-Ok 'No changes detected in model folder.'
+    }
+
+    # Start with unchanged models (keep their existing cmd and limits as-is)
+    $models = [System.Collections.Generic.List[hashtable]]::new()
+    foreach ($name in $unchangedNames) {
+        $parsed = Parse-CmdString -Cmd $existingCmds[$name]
+        $outVal = if ($existingLimits.ContainsKey($name)) { $existingLimits[$name].Output } else { 8192 }
+        $models.Add(@{ Name = $name; Cmd = $existingCmds[$name]; ContextLimit = $parsed.CtxVal; OutputLimit = $outVal })
+    }
+
+    # Configure added models
+    if ($addedFiles.Count -gt 0) {
+        Write-Host ''
+        Write-Host "  -- Configuring $($addedFiles.Count) new model(s) --" -ForegroundColor Yellow
+        Write-Host ''
+
+        $paramsForNew = $null
+
+        # Offer defaults derived from the first existing model
+        if ($existingNames.Count -gt 0) {
+            $firstName     = $existingNames | Select-Object -First 1
+            $defaultParams = Parse-CmdString -Cmd $existingCmds[$firstName]
+            $defaultParams.OutVal = if ($existingLimits.ContainsKey($firstName)) { $existingLimits[$firstName].Output } else { 8192 }
+
+            Show-DefaultParams -Params $defaultParams
+            if (Read-Confirm 'Apply these parameters to all new models?') {
+                $paramsForNew = $defaultParams
+            }
+        }
+
+        if (-not $paramsForNew) {
+            if ($addedFiles.Count -eq 1) {
+                Write-Host ''
+                $paramsForNew = Read-ModelParams
+            } else {
+                Write-Host ''
+                if (Read-Confirm 'Use the same parameters for all new models?') {
+                    Write-Host ''
+                    Write-Host '  -- Shared parameters (applied to all new models) --' -ForegroundColor Yellow
+                    Write-Host ''
+                    $paramsForNew = Read-ModelParams
+                }
+            }
+        }
+
+        $idx = 1
+        foreach ($file in $addedFiles) {
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            Write-Host "  -- New model $idx/$($addedFiles.Count): $name" -ForegroundColor Yellow
+            Write-Host ''
+            $p = if ($paramsForNew) { $paramsForNew } else { Read-ModelParams }
+            $models.Add((Build-ModelEntry -Name $name -ModelPath $file.FullName -Params $p))
+            Write-Ok "Configured: $name"
+            $idx++
+        }
+    }
+
+    # Write output files
+    $configPath = Join-Path $LlamaSwapDir 'config.yaml'
+    Write-SwapConfig -Models $models -ConfigPath $configPath
+    Write-Ok 'config.yaml updated.'
+
+    if ($models.Count -gt 0) {
+        New-OpencodeConfig -BaseUrl $serverBaseUrl -Models $models
+    }
+
+    $swapExe    = Join-Path $LlamaSwapDir 'llama-swap.exe'
+    $batFile    = Join-Path $ScriptRoot 'start-llama-swap.bat'
+    $batContent = "@echo off`r`n`"$swapExe`" --config `"$configPath`" --listen $listenAddr`r`npause`r`n"
+    Set-Content -Path $batFile -Value $batContent -Encoding ASCII -NoNewline
+    Write-Ok 'start-llama-swap.bat updated.'
+}
+
+# -------------------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------------------
 
@@ -629,6 +816,16 @@ function Main {
 
     if (-not (Test-Path $DownloadDir)) {
         New-Item -ItemType Directory -Path $DownloadDir -Force | Out-Null
+    }
+
+    # ---- Scan-only mode ---------------------------------------------------------
+    if ($Scan) {
+        Invoke-Scan
+        Write-Section 'Done'
+        Write-Ok 'Model scan complete.'
+        Write-Host ''
+        Read-Host '  Press Enter to exit'
+        return
     }
 
     # Detect whether a full installation + configuration already exists
