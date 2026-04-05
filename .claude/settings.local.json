@@ -9,7 +9,12 @@
       "Bash(powershell -ExecutionPolicy Bypass -File \"D:\\\\llama-installer\\\\.check.ps1\")",
       "Bash(powershell -Command \"Remove-Item ''D:\\\\llama-installer\\\\.check.ps1'' -Force\")",
       "Bash(powershell -Command \"Select-String -Path ''D:\\\\llama-installer\\\\install.ps1'' -Pattern ''PORT''\")",
-      "Bash(powershell -Command \"Select-String -Path ''D:\\\\llama-installer\\\\install.ps1'' -Pattern ''$\\\\{PORT\\\\}''\")"
+      "Bash(powershell -Command \"Select-String -Path ''D:\\\\llama-installer\\\\install.ps1'' -Pattern ''$\\\\{PORT\\\\}''\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://raw.githubusercontent.com/janvitos/llama-cpp-swap-installer-updater-ps/main/install.ps1\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://raw.githubusercontent.com/janvitos/llama-cpp-swap-installer-updater-ps/master/install.ps1\")"
     ]
   }
 }
