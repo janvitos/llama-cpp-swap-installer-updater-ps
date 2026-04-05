@@ -1,19 +1,19 @@
-# llama.cpp + llama-swap Installer / Updater
+# ⚡ llama.cpp + llama-swap Installer / Updater
 
 A PowerShell wizard that downloads, installs, and configures [llama.cpp](https://github.com/ggml-org/llama.cpp) and [llama-swap](https://github.com/mostlygeek/llama-swap) on Windows — and keeps them up to date with a single command.
 
 ---
 
-## What it does
+## ✨ What it does
 
 **First run** — walks you through a full setup wizard:
 
-- Downloads the latest **llama.cpp** and **llama-swap** Windows binaries from GitHub Releases
-- Lets you choose a llama.cpp build (AVX2, AVX, Vulkan, CUDA, ...)
-- Scans a folder of your choice for `.gguf` model files
-- Generates a `config.yaml` for llama-swap with a `llama-server` command for each model
-- Generates an `opencode.json` so [opencode](https://opencode.ai) connects to llama-swap automatically
-- Creates a `start-llama-swap.bat` launcher
+- 📦 Downloads the latest **llama.cpp** and **llama-swap** Windows binaries from GitHub Releases
+- 🔧 Lets you choose a llama.cpp build (AVX2, AVX, Vulkan, CUDA, ...)
+- 🔍 Scans a folder of your choice for `.gguf` model files
+- 📝 Generates a `config.yaml` for llama-swap with a `llama-server` command for each model
+- 🔗 Generates an `opencode.json` so [opencode](https://opencode.ai) connects to llama-swap automatically
+- 🚀 Creates a `start-llama-swap.bat` launcher
 
 **Subsequent runs** — detects an existing install and silently updates the binaries only. No prompts, safe to schedule as a background task.
 
@@ -21,18 +21,18 @@ A PowerShell wizard that downloads, installs, and configures [llama.cpp](https:/
 
 ---
 
-## Requirements
+## 🖥️ Requirements
 
 - Windows 10 / 11
 - PowerShell 5.1 or later (included with Windows)
 - Internet connection (for downloading binaries from GitHub)
 - `.gguf` model files (if you want to configure llama-swap)
 
-For CUDA builds of llama.cpp: an NVIDIA GPU and the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) installed.
+> For CUDA builds of llama.cpp: an NVIDIA GPU and the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) installed.
 
 ---
 
-## Quick Install
+## 🚀 Quick Install
 
 Run this in a PowerShell window:
 
@@ -44,7 +44,7 @@ You will be prompted for an install directory (default: `%USERPROFILE%\llama-ins
 
 ---
 
-## Manual Install
+## 🔧 Manual Install
 
 1. Download `install.ps1` and `install.bat` from this repo.
 2. Place both files in the same folder.
@@ -55,15 +55,15 @@ You will be prompted for an install directory (default: `%USERPROFILE%\llama-ins
 
 ---
 
-## Updating
+## 🔄 Updating
 
 Re-run `install.bat` (or `install.ps1`) at any time. If the installation is already configured, the script runs in **update-only mode** — it checks for new releases of llama.cpp and llama-swap and downloads them if available, then exits silently.
 
 ---
 
-## Reconfiguring
+## ⚙️ Reconfiguring
 
-To redo the full setup wizard (change model directory, rebuild config.yaml, etc.):
+To redo the full setup wizard (change model directory, rebuild `config.yaml`, etc.):
 
 ```bat
 install.bat --reconfigure
@@ -77,7 +77,7 @@ Or in PowerShell:
 
 ---
 
-## Directory Layout
+## 📁 Directory Layout
 
 After a full install, your chosen directory will look like this:
 
@@ -86,13 +86,13 @@ After a full install, your chosen directory will look like this:
     install.ps1
     install.bat
     start-llama-swap.bat        <- double-click to start llama-swap
-    llama-swap\
-        llama-swap.exe
-        config.yaml
-        .version
     llama.cpp\
         llama-server.exe
         (+ other llama.cpp binaries and DLLs)
+        .version
+    llama-swap\
+        llama-swap.exe
+        config.yaml
         .version
 ```
 
@@ -100,7 +100,7 @@ After a full install, your chosen directory will look like this:
 
 ---
 
-## llama-swap config.yaml
+## 🤖 llama-swap config.yaml
 
 The wizard scans your model directory for `.gguf` files and builds a `config.yaml` entry for each one, including:
 
@@ -112,12 +112,12 @@ You can apply the same parameters to all models at once, or configure each one i
 
 ---
 
-## opencode.json
+## 🔗 opencode.json
 
 If you use [opencode](https://opencode.ai), the wizard writes an `opencode.json` to `%USERPROFILE%\.config\opencode\opencode.json` that registers llama-swap as an OpenAI-compatible provider, with each model's context and output limits pre-filled.
 
 ---
 
-## License
+## 📄 License
 
 [MIT](LICENSE)
