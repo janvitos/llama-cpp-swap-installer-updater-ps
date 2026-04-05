@@ -124,6 +124,7 @@ function Invoke-Download ([string]$Url, [string]$OutFile) {
     $buffer            = New-Object byte[] 65536
     $downloaded        = 0
     $barWidth          = 40
+    $lastPct           = -1
 
     try {
         while ($true) {
@@ -133,12 +134,15 @@ function Invoke-Download ([string]$Url, [string]$OutFile) {
             $downloaded += $read
 
             if ($total -gt 0) {
-                $pct   = [int]($downloaded / $total * 100)
-                $filled = [int]($downloaded / $total * $barWidth)
-                $bar   = ('=' * $filled) + ('-' * ($barWidth - $filled))
-                $dlMb  = '{0:N1}' -f ($downloaded / 1MB)
-                $totMb = '{0:N1}' -f ($total / 1MB)
-                Write-Host "`r  [$bar] $pct% ($dlMb / $totMb MB)  " -NoNewline
+                $pct = [int]($downloaded / $total * 100)
+                if ($pct -ne $lastPct) {
+                    $filled = [int]($downloaded / $total * $barWidth)
+                    $bar    = ('=' * $filled) + ('-' * ($barWidth - $filled))
+                    $dlMb   = '{0:N1}' -f ($downloaded / 1MB)
+                    $totMb  = '{0:N1}' -f ($total / 1MB)
+                    Write-Host "`r  [$bar] $pct% ($dlMb / $totMb MB)  " -NoNewline
+                    $lastPct = $pct
+                }
             } else {
                 $dlMb = '{0:N1}' -f ($downloaded / 1MB)
                 Write-Host "`r  Downloading... $dlMb MB  " -NoNewline
@@ -372,39 +376,27 @@ function Select-ModelDirectory {
     $defaultDir = Join-Path $ScriptRoot 'models'
 
     Write-Host '  Where are your .gguf model files located?' -ForegroundColor Cyan
+    Write-Host '  Press Enter to use the default, or type a custom path.' -ForegroundColor DarkGray
     Write-Host ''
 
-    $useDefault = Read-Confirm "Use $defaultDir as model directory?"
+    $customDir = (Read-Host "  Model directory [$defaultDir]").Trim()
+    $modelDir  = if ([string]::IsNullOrEmpty($customDir)) { $defaultDir } else { $customDir }
 
-    if ($useDefault) {
-        if (-not (Test-Path $defaultDir)) {
-            New-Item -ItemType Directory -Path $defaultDir -Force | Out-Null
-            Write-Ok "Created $defaultDir"
-        }
+    if ($modelDir -eq $defaultDir -and -not (Test-Path $modelDir)) {
+        New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
+        Write-Ok "Created $modelDir"
         Write-Host ''
         Write-Host '  Please place your .gguf model files in:' -ForegroundColor Yellow
-        Write-Host "    $defaultDir" -ForegroundColor White
+        Write-Host "    $modelDir" -ForegroundColor White
         Write-Host ''
         Read-Host '  Press Enter when ready to scan for models'
-        return $defaultDir
+    } elseif (-not (Test-Path $modelDir)) {
+        Write-Warn "Directory not found: $modelDir"
+        Write-Info 'Skipping config.yaml and opencode.json.'
+        return $null
     }
-    else {
-        Write-Host ''
-        $customDir = (Read-Host '  Enter model directory path (or Enter to skip config)').Trim()
 
-        if ([string]::IsNullOrEmpty($customDir)) {
-            Write-Info 'No model directory selected -- skipping config.yaml and opencode.json.'
-            return $null
-        }
-
-        if (-not (Test-Path $customDir)) {
-            Write-Warn "Directory not found: $customDir"
-            Write-Info 'Skipping config.yaml and opencode.json.'
-            return $null
-        }
-
-        return $customDir
-    }
+    return $modelDir
 }
 
 # -------------------------------------------------------------------------------
