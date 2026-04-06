@@ -522,8 +522,8 @@ function Select-ModelDirectory {
 # Parameter helpers  (shared between config wizard and --scan)
 # -------------------------------------------------------------------------------
 
-function Read-ModelParams {
-    $d = (Read-Settings).Params
+function Read-ModelParams ([hashtable]$Defaults = $null) {
+    $d = if ($Defaults) { $Defaults } else { (Read-Settings).Params }
 
     $ctxStr = (Read-Host "  Context window size [$($d.CtxVal)]").Trim()
     $ctxVal = 0
@@ -548,7 +548,6 @@ function Read-ModelParams {
         MinPStr = $minPStr; RepPenStr  = $repPenStr
         PresPenStr = $presPenStr
     }
-    Save-Settings @{ Params = $params }
     return $params
 }
 
@@ -637,6 +636,10 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
     $models = [System.Collections.Generic.List[hashtable]]::new()
     $total  = $ggufFiles.Count
 
+    # Read existing config so per-model defaults can be drawn from config.yaml
+    $existingCmds   = Read-ConfigModels
+    $existingLimits = Read-OpencodeModels
+
     $sharedParams = $null
     if ($total -gt 1) {
         Write-Host ''
@@ -645,10 +648,12 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
             Write-Host '  -- Shared parameters (applied to all models) --' -ForegroundColor Yellow
             Write-Host ''
             $sharedParams = Read-ModelParams
+            Save-Settings @{ Params = $sharedParams }
             Write-Host ''
         }
     }
 
+    $lastParams = $null
     $idx = 1
     foreach ($file in $ggufFiles) {
         $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
@@ -656,7 +661,21 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
         Write-Host "  -- Model $idx/$total : $name" -ForegroundColor Yellow
         Write-Host ''
 
-        $entryParams = if ($sharedParams) { $sharedParams } else { Read-ModelParams }
+        if ($sharedParams) {
+            $entryParams = $sharedParams
+        } else {
+            # Use this model's existing config.yaml values as defaults; fall back to global settings for new models
+            $modelDefaults = $null
+            if ($existingCmds.ContainsKey($name)) {
+                $modelDefaults = Parse-CmdString -Cmd $existingCmds[$name]
+                $modelDefaults.OutVal = if ($existingLimits.ContainsKey($name)) {
+                    $existingLimits[$name].Output
+                } else { (Read-Settings).Params.OutVal }
+            }
+            $entryParams = Read-ModelParams -Defaults $modelDefaults
+            $lastParams  = $entryParams
+        }
+
         $entry = Build-ModelEntry -Name $name -ModelPath $file.FullName -Params $entryParams
         $models.Add($entry)
         Write-Ok "Configured: $name"
@@ -664,6 +683,9 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
         Write-Host ''
         $idx++
     }
+
+    # In per-model mode, save the last model's params as the rolling global default
+    if ($lastParams) { Save-Settings @{ Params = $lastParams } }
 
     if (-not (Test-Path $LlamaSwapDir)) {
         New-Item -ItemType Directory -Path $LlamaSwapDir -Force | Out-Null
@@ -926,6 +948,8 @@ function Invoke-Scan {
                 }
             }
         }
+
+        if ($paramsForNew) { Save-Settings @{ Params = $paramsForNew } }
 
         $idx = 1
         foreach ($file in $addedFiles) {
