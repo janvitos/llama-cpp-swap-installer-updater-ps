@@ -920,10 +920,11 @@ function Invoke-Scan {
         Write-Host "  -- Configuring $($addedFiles.Count) new model(s) --" -ForegroundColor Yellow
         Write-Host ''
 
-        $paramsForNew = $null
+        $paramsForNew  = $null
+        $perModelMode  = $false
 
-        # Offer defaults derived from the first existing model
         if ($existingNames.Count -gt 0) {
+            # Offer defaults derived from the first existing model
             $firstName     = $existingNames | Select-Object -First 1
             $defaultParams = Parse-CmdString -Cmd $existingCmds[$firstName]
             $defaultParams.OutVal = if ($existingLimits.ContainsKey($firstName)) { $existingLimits[$firstName].Output } else { 8192 }
@@ -931,36 +932,47 @@ function Invoke-Scan {
             Show-DefaultParams -Params $defaultParams
             if (Read-Confirm 'Apply these parameters to all new models?') {
                 $paramsForNew = $defaultParams
+            } else {
+                # User declined shared defaults -- configure each new model individually
+                $perModelMode = $true
             }
-        }
-
-        if (-not $paramsForNew) {
-            if ($addedFiles.Count -eq 1) {
+        } elseif ($addedFiles.Count -eq 1) {
+            # Single new model, no existing models -- prompt directly
+            Write-Host ''
+            $paramsForNew = Read-ModelParams
+        } else {
+            # Multiple new models, no existing models -- ask whether to share
+            Write-Host ''
+            if (Read-Confirm 'Use the same parameters for all new models?') {
+                Write-Host ''
+                Write-Host '  -- Shared parameters (applied to all new models) --' -ForegroundColor Yellow
                 Write-Host ''
                 $paramsForNew = Read-ModelParams
             } else {
-                Write-Host ''
-                if (Read-Confirm 'Use the same parameters for all new models?') {
-                    Write-Host ''
-                    Write-Host '  -- Shared parameters (applied to all new models) --' -ForegroundColor Yellow
-                    Write-Host ''
-                    $paramsForNew = Read-ModelParams
-                }
+                $perModelMode = $true
             }
         }
 
         if ($paramsForNew) { Save-Settings @{ Params = $paramsForNew } }
 
+        $lastParams = $null
         $idx = 1
         foreach ($file in $addedFiles) {
             $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
             Write-Host "  -- New model $idx/$($addedFiles.Count): $name" -ForegroundColor Yellow
             Write-Host ''
-            $p = if ($paramsForNew) { $paramsForNew } else { Read-ModelParams }
+            if ($paramsForNew) {
+                $p = $paramsForNew
+            } else {
+                $p = Read-ModelParams
+                $lastParams = $p
+            }
             $models.Add((Build-ModelEntry -Name $name -ModelPath $file.FullName -Params $p))
             Write-Ok "Configured: $name"
             $idx++
         }
+
+        if ($lastParams) { Save-Settings @{ Params = $lastParams } }
     }
 
     # Write output files
@@ -1132,11 +1144,13 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     }
 
     try {
-        # 1. Install / update llama-swap
-        Install-Or-Update-LlamaSwap
+        if (-not $Reconfigure) {
+            # 1. Install / update llama-swap
+            Install-Or-Update-LlamaSwap
 
-        # 2. Install / update llama.cpp
-        $null = Install-Or-Update-LlamaCpp
+            # 2. Install / update llama.cpp
+            $null = Install-Or-Update-LlamaCpp
+        }
 
         # 3. Select model directory (drives config.yaml + opencode.json)
         $modelDir = Select-ModelDirectory
