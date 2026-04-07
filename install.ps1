@@ -591,7 +591,7 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
     Write-Section 'llama-swap - config.yaml'
 
     # Scan model directory for .gguf files
-    $ggufFiles = @(Get-ChildItem -Path $ModelDir -Filter '*.gguf' | Sort-Object Name)
+    $ggufFiles = @(Get-ChildItem -Path $ModelDir -Filter '*.gguf' -Recurse | Sort-Object FullName)
 
     if ($ggufFiles.Count -eq 0) {
         Write-Warn "No .gguf files found in $ModelDir"
@@ -885,7 +885,7 @@ function Invoke-Scan {
     Save-Settings @{ ModelDir = $modelDir }
 
     # Scan current .gguf files
-    $ggufFiles    = @(Get-ChildItem -Path $modelDir -Filter '*.gguf' | Sort-Object Name)
+    $ggufFiles    = @(Get-ChildItem -Path $modelDir -Filter '*.gguf' -Recurse | Sort-Object FullName)
     $currentNames = @($ggufFiles | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
 
     # Compute diff
