@@ -447,11 +447,11 @@ function Install-Or-Update-LlamaCpp {
     $zip = Join-Path $DownloadDir $selected.name
     Invoke-Download -Url $selected.browser_download_url -OutFile $zip
 
-    # Download matching CUDA runtime if this is a CUDA build
+    # Download matching CUDA runtime only when the CUDA build type is new or has changed
     $cudaZip = $null
-    if ($buildType -match '^cuda-(.+)$') {
+    if ($buildType -match '^cuda-(.+)$' -and $buildType -ne $currentBuild) {
         $cudaVer = $Matches[1]
-        Write-Info "CUDA build detected - looking for cudart (cuda $cudaVer)..."
+        Write-Info "CUDA build changed - downloading cudart (cuda $cudaVer)..."
 
         $cudart = Get-CudartAsset -Assets $rel.assets -CudaVersion $cudaVer
         if ($cudart) {
@@ -466,7 +466,11 @@ function Install-Or-Update-LlamaCpp {
     }
 
     Write-Do "Installing to $LlamaCppDir ..."
-    if (Test-Path $LlamaCppDir) { Remove-Item $LlamaCppDir -Recurse -Force }
+    # Wipe the directory only when the build type changes (or on a fresh install)
+    # so that CUDA DLLs from a previous same-version install are preserved on updates
+    if ((Test-Path $LlamaCppDir) -and $buildType -ne $currentBuild) {
+        Remove-Item $LlamaCppDir -Recurse -Force
+    }
 
     Expand-ToDir -Zip $zip -Dest $LlamaCppDir
     Remove-Item $zip -Force
