@@ -104,6 +104,34 @@ function Get-LatestRelease ([string]$Repo) {
     }
 }
 
+function Get-LatestLlamaCppRelease {
+    # Not every llama.cpp release includes Windows builds, and releases that do
+    # sometimes have builds uploaded incrementally. Walk recent releases and return
+    # the first one that has a complete-enough Windows build set (>= 4 x64 zips).
+    $page = 1
+    while ($true) {
+        $uri  = "$GH_API/ggml-org/llama.cpp/releases?per_page=20&page=$page"
+        try {
+            $releases = Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = 'llama-installer/1.0' }
+        }
+        catch {
+            $code = $_.Exception.Response.StatusCode.value__
+            if ($code -eq 403) { throw 'GitHub API rate limit reached. Wait a few minutes and try again.' }
+            throw "Failed to fetch llama.cpp releases: $_"
+        }
+        if (-not $releases -or $releases.Count -eq 0) {
+            throw 'No llama.cpp releases found.'
+        }
+        foreach ($rel in $releases) {
+            $winBuilds = @($rel.assets | Where-Object {
+                $_.name -match '^llama-[^-]+-bin-win-.+-x64\.zip$'
+            })
+            if ($winBuilds.Count -ge 4) { return $rel }
+        }
+        $page++
+    }
+}
+
 # -------------------------------------------------------------------------------
 # Settings  (persists user choices across runs)
 # -------------------------------------------------------------------------------
@@ -416,10 +444,10 @@ function Select-Build ($Builds, [string]$CurrentBuild) {
     }
 }
 
-function Install-Or-Update-LlamaCpp {
+function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
     Write-Section 'llama.cpp'
 
-    $rel    = Get-LatestRelease -Repo $REPO_LLAMA_CPP
+    $rel    = Get-LatestLlamaCppRelease
     $latest = $rel.tag_name
     $local  = Get-LocalVersion -Dir $LlamaCppDir
 
@@ -431,17 +459,44 @@ function Install-Or-Update-LlamaCpp {
     if ($local) { Write-Info "Installed : $local  [$currentBuild]" }
     else        { Write-Info "Installed : (not found)" }
 
-    if ($local -eq $latest -and (Test-Path $LlamaCppDir)) {
+    if ($local -eq $latest -and (Test-Path $LlamaCppDir) -and -not $ForceMenu) {
         Write-Ok 'llama.cpp is already up to date.'
         return $currentBuild
     }
 
-    $builds = Get-WindowsBuilds -Assets $rel.assets
+    $builds = @(Get-WindowsBuilds -Assets $rel.assets)
     if ($builds.Count -eq 0) { throw "No Windows builds found for llama.cpp $latest." }
 
-    $choice    = Select-Build -Builds $builds -CurrentBuild $currentBuild
+    # On updates, auto-select the current build type without prompting
+    # (skipped when -ForceMenu is set, e.g. during --reconfigure)
+    $choice = $null
+    if ($currentBuild -ne '' -and -not $ForceMenu) {
+        $labels = @($builds | ForEach-Object {
+            if ($_.name -match '^llama-[^-]+-bin-win-(.+)-x64\.zip$') { $Matches[1] } else { $_.name }
+        })
+        for ($i = 0; $i -lt $labels.Count; $i++) {
+            if ($labels[$i] -eq $currentBuild) {
+                $choice = @{ Asset = $builds[$i]; Type = $labels[$i] }
+                Write-Info "Build type : $currentBuild (unchanged)"
+                break
+            }
+        }
+        if (-not $choice) {
+            Write-Warn "Build '$currentBuild' not found in $latest -- please select manually."
+        }
+    }
+    if (-not $choice) {
+        $choice = Select-Build -Builds $builds -CurrentBuild $currentBuild
+    }
+
     $selected  = $choice.Asset
     $buildType = $choice.Type
+
+    # If same version and same build type are already installed, nothing to do
+    if ($local -eq $latest -and $buildType -eq $currentBuild) {
+        Write-Ok "llama.cpp $latest [$buildType] is already up to date."
+        return $buildType
+    }
 
     # Download main binary zip
     $zip = Join-Path $DownloadDir $selected.name
@@ -1154,13 +1209,11 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     }
 
     try {
-        if (-not $Reconfigure) {
-            # 1. Install / update llama-swap
-            Install-Or-Update-LlamaSwap
+        # 1. Install / update llama-swap
+        Install-Or-Update-LlamaSwap
 
-            # 2. Install / update llama.cpp
-            $null = Install-Or-Update-LlamaCpp
-        }
+        # 2. Install / update llama.cpp (show build menu during reconfigure)
+        $null = Install-Or-Update-LlamaCpp -ForceMenu:$Reconfigure
 
         # 3. Select model directory (drives config.yaml + opencode.json)
         $modelDir = Select-ModelDirectory
