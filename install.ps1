@@ -143,6 +143,7 @@ function Read-Settings {
         ListenPort = '8080'
         Params     = @{
             CtxVal = 65536; OutVal = 8192; FullGpu = $true
+            Parallel = 1; KvQuant = $true
             TempStr = ''; TopPStr = ''; TopKStr = ''
             MinPStr = ''; RepPenStr = ''; PresPenStr = ''
         }
@@ -158,6 +159,8 @@ function Read-Settings {
             if ($null -ne $p.CtxVal)     { $defaults.Params.CtxVal     = [int]$p.CtxVal }
             if ($null -ne $p.OutVal)     { $defaults.Params.OutVal     = [int]$p.OutVal }
             if ($null -ne $p.FullGpu)    { $defaults.Params.FullGpu    = [bool]$p.FullGpu }
+            if ($null -ne $p.Parallel)   { $defaults.Params.Parallel   = [int]$p.Parallel }
+            if ($null -ne $p.KvQuant)    { $defaults.Params.KvQuant    = [bool]$p.KvQuant }
             if ($null -ne $p.TempStr)    { $defaults.Params.TempStr    = [string]$p.TempStr }
             if ($null -ne $p.TopPStr)    { $defaults.Params.TopPStr    = [string]$p.TopPStr }
             if ($null -ne $p.TopKStr)    { $defaults.Params.TopKStr    = [string]$p.TopKStr }
@@ -593,6 +596,14 @@ function Read-ModelParams ([hashtable]$Defaults = $null) {
     if (-not [int]::TryParse($outStr, [ref]$outVal) -or $outVal -le 0) { $outVal = $d.OutVal }
 
     $fullGpu    = Read-Confirm 'Load model fully on GPU (--gpu-layers 999)?' -Default $d.FullGpu
+
+    $parallelStr = (Read-Host "  Parallel requests (--parallel) [$($d.Parallel)]").Trim()
+    $parallelVal = 0
+    if (-not [int]::TryParse($parallelStr, [ref]$parallelVal) -or $parallelVal -le 0) { $parallelVal = $d.Parallel }
+
+    $kvQuantDefault = if ($null -ne $d.KvQuant) { $d.KvQuant } else { (Read-Settings).Params.KvQuant }
+    $kvQuant    = Read-Confirm 'KV Cache Quantization (--cache-type-k/v q8_0, reduces VRAM)?' -Default $kvQuantDefault
+
     $tempStr    = Read-OptionalParam 'Temperature     ' $d.TempStr
     $topPStr    = Read-OptionalParam 'Top_P           ' $d.TopPStr
     $topKStr    = Read-OptionalParam 'Top_K           ' $d.TopKStr
@@ -602,7 +613,8 @@ function Read-ModelParams ([hashtable]$Defaults = $null) {
 
     $params = @{
         CtxVal = $ctxVal;  OutVal      = $outVal
-        FullGpu = $fullGpu; TempStr    = $tempStr
+        FullGpu = $fullGpu; Parallel   = $parallelVal
+        KvQuant = $kvQuant; TempStr    = $tempStr
         TopPStr = $topPStr; TopKStr    = $topKStr
         MinPStr = $minPStr; RepPenStr  = $repPenStr
         PresPenStr = $presPenStr
@@ -614,6 +626,8 @@ function Build-ModelEntry ([string]$Name, [string]$ModelPath, [hashtable]$Params
     $llamaServerExe = Join-Path $LlamaCppDir 'llama-server.exe'
     $cmd = "$llamaServerExe -m `"$ModelPath`" --port `${PORT} --ctx-size $($Params.CtxVal) --jinja --flash-attn on"
     if ($Params.FullGpu)                                         { $cmd += ' --gpu-layers 999' }
+    if ($Params.Parallel -gt 1)                                  { $cmd += " --parallel $($Params.Parallel)" }
+    if ($Params.KvQuant)                                         { $cmd += ' --cache-type-k q8_0 --cache-type-v q8_0' }
     if (-not [string]::IsNullOrEmpty($Params.TempStr))          { $cmd += " --temp $($Params.TempStr)" }
     if (-not [string]::IsNullOrEmpty($Params.TopPStr))          { $cmd += " --top-p $($Params.TopPStr)" }
     if (-not [string]::IsNullOrEmpty($Params.TopKStr))          { $cmd += " --top-k $($Params.TopKStr)" }
@@ -828,11 +842,14 @@ $modelsBlock
 function Parse-CmdString ([string]$Cmd) {
     $p = @{
         CtxVal = 65536; OutVal = 8192; FullGpu = $true
+        Parallel = 1; KvQuant = $null
         TempStr = ''; TopPStr = ''; TopKStr = ''
         MinPStr = ''; RepPenStr = ''; PresPenStr = ''
     }
     if ($Cmd -match '--ctx-size\s+(\d+)')            { $p.CtxVal     = [int]$Matches[1] }
     if ($Cmd -match '--gpu-layers\s+999')            { $p.FullGpu    = $true }
+    if ($Cmd -match '--parallel\s+(\d+)')            { $p.Parallel   = [int]$Matches[1] }
+    if ($Cmd -match '--cache-type-k')                { $p.KvQuant    = $true }
     if ($Cmd -match '--temp\s+([\d.]+)')             { $p.TempStr    = $Matches[1] }
     if ($Cmd -match '--top-p\s+([\d.]+)')            { $p.TopPStr    = $Matches[1] }
     if ($Cmd -match '--top-k\s+(\d+)')               { $p.TopKStr    = $Matches[1] }
@@ -891,8 +908,12 @@ function Show-DefaultParams ([hashtable]$Params) {
     Write-Host '  Default parameters (from existing models):' -ForegroundColor Cyan
     Write-Host "    Context window : $($Params.CtxVal)" -ForegroundColor White
     Write-Host "    Max output     : $($Params.OutVal)" -ForegroundColor White
-    $gpuLabel = if ($Params.FullGpu) { 'Yes (--gpu-layers 999)' } else { 'No' }
+    $gpuLabel      = if ($Params.FullGpu) { 'Yes (--gpu-layers 999)' } else { 'No' }
+    $parallelLabel = $Params.Parallel
+    $kvQuantLabel  = if ($Params.KvQuant) { 'Yes (q8_0)' } else { 'No' }
     Write-Host "    GPU offload    : $gpuLabel" -ForegroundColor White
+    Write-Host "    Parallel reqs  : $parallelLabel" -ForegroundColor White
+    Write-Host "    KV Cache Quant : $kvQuantLabel" -ForegroundColor White
     $samplers = @()
     if ($Params.TempStr)    { $samplers += "temp=$($Params.TempStr)" }
     if ($Params.TopPStr)    { $samplers += "top_p=$($Params.TopPStr)" }
