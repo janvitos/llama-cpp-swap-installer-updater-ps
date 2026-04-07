@@ -591,7 +591,7 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
     Write-Section 'llama-swap - config.yaml'
 
     # Scan model directory for .gguf files
-    $ggufFiles = @(Get-ChildItem -Path $ModelDir -Filter '*.gguf' -Recurse | Sort-Object FullName)
+    $ggufFiles = @(Get-ChildItem -Path $ModelDir -Filter '*.gguf' -Recurse | Where-Object { $_.Name -notlike '*mmproj*' } | Sort-Object FullName)
 
     if ($ggufFiles.Count -eq 0) {
         Write-Warn "No .gguf files found in $ModelDir"
@@ -854,12 +854,18 @@ function Invoke-Scan {
     $listenAddr     = Read-ExistingListenAddr
     $serverBaseUrl  = "http://$listenAddr"
 
-    # Infer model directory from the existing config, let user confirm or change
+    # Determine model directory: prefer saved settings, fall back to inferring from config.yaml
+    $savedDir    = (Read-Settings).ModelDir
     $inferredDir = $null
-    foreach ($cmd in $existingCmds.Values) {
-        if ($cmd -match '-m\s+"([^"]+)"') {
-            $inferredDir = Split-Path -Parent $Matches[1]
-            break
+    if ($savedDir -and (Test-Path $savedDir)) {
+        $inferredDir = $savedDir
+    } else {
+        foreach ($cmd in $existingCmds.Values) {
+            if ($cmd -match '-m\s+"([^"]+)"') {
+                # Walk up from the model file until we find the root models dir
+                $inferredDir = Split-Path -Parent $Matches[1]
+                break
+            }
         }
     }
 
@@ -885,7 +891,7 @@ function Invoke-Scan {
     Save-Settings @{ ModelDir = $modelDir }
 
     # Scan current .gguf files
-    $ggufFiles    = @(Get-ChildItem -Path $modelDir -Filter '*.gguf' -Recurse | Sort-Object FullName)
+    $ggufFiles    = @(Get-ChildItem -Path $modelDir -Filter '*.gguf' -Recurse | Where-Object { $_.Name -notlike '*mmproj*' } | Sort-Object FullName)
     $currentNames = @($ggufFiles | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
 
     # Compute diff
