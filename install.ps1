@@ -624,7 +624,7 @@ function Read-ModelParams ([hashtable]$Defaults = $null) {
 
 function Build-ModelEntry ([string]$Name, [string]$ModelPath, [hashtable]$Params) {
     $llamaServerExe = Join-Path $LlamaCppDir 'llama-server.exe'
-    $cmd = "$llamaServerExe -m `"$ModelPath`" --port `${PORT} --ctx-size $($Params.CtxVal) --jinja --flash-attn on"
+    $cmd = "$llamaServerExe -m `"$ModelPath`" --port `${PORT} --ctx-size $($Params.CtxVal)"
     if ($Params.FullGpu)                                         { $cmd += ' --gpu-layers 999' }
     if ($Params.Parallel -gt 1)                                  { $cmd += " --parallel $($Params.Parallel)" }
     if ($Params.KvQuant)                                         { $cmd += ' --cache-type-k q8_0 --cache-type-v q8_0' }
