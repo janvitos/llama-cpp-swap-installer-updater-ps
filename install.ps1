@@ -9,7 +9,7 @@
     On subsequent runs, detects an existing installation and only checks for
     binary updates -- no prompts, safe to use as a scheduled update task.
 
-    Use -Reconfigure to force the full wizard to run again.
+    Use -Reconfigure to force the full wizard to run again (skips binary download/update).
     Use -Scan to update config.yaml and opencode.json without touching the binaries.
 
     Directories created:
@@ -550,20 +550,36 @@ function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
 # Model directory selection
 # -------------------------------------------------------------------------------
 
-function Select-ModelDirectory {
+function Select-ModelDirectory ([bool]$ForceNew = $false) {
     Write-Section 'Model Directory'
 
     $saved      = Read-Settings
-    $defaultDir = if ($saved.ModelDir -and (Test-Path $saved.ModelDir)) { $saved.ModelDir } else { Join-Path $ScriptRoot 'models' }
+    $defaultDir = if ($saved.ModelDir -and (Test-Path $saved.ModelDir)) {
+        $saved.ModelDir
+    } else {
+        Join-Path $ScriptRoot 'models'
+    }
 
-    Write-Host '  Where are your .gguf model files located?' -ForegroundColor Cyan
-    Write-Host '  Press Enter to use the default, or type a custom path.' -ForegroundColor DarkGray
-    Write-Host ''
+    if ($ForceNew) {
+        Write-Host '  Reconfigure mode -- choose a model directory.' -ForegroundColor Cyan
+        Write-Host ''
+        $customDir = (Read-Host "  Model directory [$defaultDir]").Trim()
+        $modelDir  = if ([string]::IsNullOrEmpty($customDir)) { $defaultDir } else { $customDir }
+        if ([string]::IsNullOrEmpty($modelDir)) {
+            Write-Warn 'No directory specified.'
+            return $null
+        }
+    }
+    else {
+        Write-Host '  Where are your .gguf model files located?' -ForegroundColor Cyan
+        Write-Host '  Press Enter to use the default, or type a custom path.' -ForegroundColor DarkGray
+        Write-Host ''
 
-    $customDir = (Read-Host "  Model directory [$defaultDir]").Trim()
-    $modelDir  = if ([string]::IsNullOrEmpty($customDir)) { $defaultDir } else { $customDir }
+        $customDir = (Read-Host "  Model directory [$defaultDir]").Trim()
+        $modelDir  = if ([string]::IsNullOrEmpty($customDir)) { $defaultDir } else { $customDir }
+    }
 
-    if ($modelDir -eq $defaultDir -and -not (Test-Path $modelDir)) {
+    if (-not $ForceNew -and $modelDir -eq $defaultDir -and -not (Test-Path $modelDir)) {
         New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
         Write-Ok "Created $modelDir"
         Write-Host ''
@@ -660,7 +676,7 @@ function Write-SwapConfig ([System.Collections.Generic.List[hashtable]]$Models, 
 # llama-swap  config.yaml
 # -------------------------------------------------------------------------------
 
-function New-LlamaSwapConfig ([string]$ModelDir) {
+function New-LlamaSwapConfig ([string]$ModelDir, [bool]$Force = $false) {
     Write-Section 'llama-swap - config.yaml'
 
     # Scan model directory for .gguf files
@@ -677,7 +693,7 @@ function New-LlamaSwapConfig ([string]$ModelDir) {
 
     $configPath = Join-Path $LlamaSwapDir 'config.yaml'
 
-    if (Test-Path $configPath) {
+    if (-not $Force -and (Test-Path $configPath)) {
         Write-Host ''
         Write-Info "config.yaml already exists: $configPath"
         if (-not (Read-Confirm 'Overwrite it?')) {
@@ -1194,16 +1210,13 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         return
     }
 
-    # Detect whether a full installation + configuration already exists
-    $isConfigured = ((Get-LocalVersion -Dir $LlamaSwapDir) -ne '') -and
-                    ((Get-LocalVersion -Dir $LlamaCppDir)  -ne '') -and
-                    (Test-Path (Join-Path $LlamaSwapDir 'config.yaml')) -and
-                    (Test-Path (Join-Path $ScriptRoot    'start-llama-swap.bat'))
+    # ---- Update-only mode (skip when --reconfigure) -------------------------
+    $binariesInstalled = ((Get-LocalVersion -Dir $LlamaSwapDir) -ne '') -and
+                         ((Get-LocalVersion -Dir $LlamaCppDir)  -ne '')
 
-    if ($isConfigured -and -not $Reconfigure) {
-        # ---- Update-only mode ------------------------------------------------
+    if ($binariesInstalled -and -not $Reconfigure) {
         Write-Info 'Existing installation detected -- running in update-only mode.'
-        Write-Info 'Run with --reconfigure to redo the full setup wizard.'
+        Write-Info 'Run with -Reconfigure to redo the full setup wizard.'
         Write-Host ''
         try {
             Install-Or-Update-LlamaSwap
@@ -1225,39 +1238,62 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 
     # ---- Full install / reconfigure mode -------------------------------------
     if ($Reconfigure) {
-        Write-Info 'Reconfigure flag detected -- running full setup wizard.'
+        Write-Info 'Reconfigure flag detected -- skipping binary install, running config wizard only.'
         Write-Host ''
     }
 
+    $modelDir  = $null
+    $swapCfg   = $null
+
     try {
-        # 1. Install / update llama-swap
-        Install-Or-Update-LlamaSwap
-
-        # 2. Install / update llama.cpp (show build menu during reconfigure)
-        $null = Install-Or-Update-LlamaCpp -ForceMenu:$Reconfigure
-
-        # 3. Select model directory (drives config.yaml + opencode.json)
-        $modelDir = Select-ModelDirectory
-
-        # 4. Optional: llama-swap config.yaml (requires a model directory)
-        $swapCfg = $null
-        if ($modelDir) {
-            $swapCfg = New-LlamaSwapConfig -ModelDir $modelDir
+        # Binary install (skip when --reconfigure)
+        if (-not $Reconfigure) {
+            Install-Or-Update-LlamaSwap
+            $null = Install-Or-Update-LlamaCpp -ForceMenu:$Reconfigure
         }
 
-        # 5. Optional: opencode.json (only if models were configured)
-        if ($swapCfg -and $swapCfg.Models.Count -gt 0) {
-            New-OpencodeConfig -BaseUrl $swapCfg.ServerBaseUrl -Models $swapCfg.Models
-        }
+        # Config wizard
+        if ($Reconfigure) {
+            # Reconfigure: always prompts for new model directory, skips overwrite confirm
+            $modelDir = Select-ModelDirectory -ForceNew $true
+            if ($modelDir) {
+                $swapCfg = New-LlamaSwapConfig -ModelDir $modelDir -Force $true
+            }
+        } else {
+            # Fresh install: ask whether to configure models
+            if (-not $binariesInstalled) {
+                Write-Host ''
+                $configModels = Read-Confirm 'Set up model location, llama-swap, and opencode?'
+            } else {
+                $configModels = $true
+            }
+            if ($configModels) {
+                # Select model directory (drives config.yaml + opencode.json)
+                $modelDir = Select-ModelDirectory
 
-        # 6. Create start-llama-swap.bat if config was written
-        if ($swapCfg) {
-            $swapExe     = Join-Path $LlamaSwapDir 'llama-swap.exe'
-            $swapCfgFile = Join-Path $LlamaSwapDir 'config.yaml'
-            $batFile     = Join-Path $ScriptRoot 'start-llama-swap.bat'
-            $batContent  = "@echo off`r`n`"$swapExe`" --config `"$swapCfgFile`" --listen $($swapCfg.ListenAddr)`r`npause`r`n"
-            Set-Content -Path $batFile -Value $batContent -Encoding ASCII -NoNewline
-            Write-Ok "start-llama-swap.bat written to $batFile"
+                # Optional: llama-swap config.yaml (requires a model directory)
+                $swapCfg = $null
+                if ($modelDir) {
+                    $swapCfg = New-LlamaSwapConfig -ModelDir $modelDir
+                }
+
+                # Optional: opencode.json (only if models were configured)
+                if ($swapCfg -and $swapCfg.Models.Count -gt 0) {
+                    New-OpencodeConfig -BaseUrl $swapCfg.ServerBaseUrl -Models $swapCfg.Models
+                }
+
+                # Create start-llama-swap.bat (only on first-ever run)
+                if ($swapCfg) {
+                    $batFile     = Join-Path $ScriptRoot 'start-llama-swap.bat'
+                    if (-not (Test-Path $batFile)) {
+                        $swapExe     = Join-Path $LlamaSwapDir 'llama-swap.exe'
+                        $swapCfgFile = Join-Path $LlamaSwapDir 'config.yaml'
+                        $batContent  = "@echo off`r`n`"$swapExe`" --config `"$swapCfgFile`" --listen $($swapCfg.ListenAddr)`r`npause`r`n"
+                        Set-Content -Path $batFile -Value $batContent -Encoding ASCII -NoNewline
+                        Write-Ok "start-llama-swap.bat written to $batFile"
+                    }
+                }
+            }
         }
     }
     finally {
@@ -1270,12 +1306,11 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         }
     }
 
-    # 7. Optional: scheduled auto-update task
+    # 8. Optional: scheduled auto-update task
     Write-Host ''
     Register-UpdateTask
 
     # Summary
-    Write-Section 'Done'
 
     $swapExe     = Join-Path $LlamaSwapDir 'llama-swap.exe'
     $swapCfgFile = Join-Path $LlamaSwapDir 'config.yaml'
