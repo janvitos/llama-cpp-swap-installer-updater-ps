@@ -282,7 +282,7 @@ function Get-ProcessesUsingDir ([string]$Dir) {
     return $procs
 }
 
-function Stop-LockedProcesses ([hashtable[]]$Processes, [string]$LockedFile) {
+function Stop-LockedProcesses ([hashtable[]]$Processes, [string]$LockedFile = '') {
     # Prompts the user to stop processes that have $LockedFile open.
     # Returns $true if all processes were stopped successfully, $false otherwise.
     Write-Host ''
@@ -292,7 +292,9 @@ function Stop-LockedProcesses ([hashtable[]]$Processes, [string]$LockedFile) {
         $exe = [System.IO.Path]::GetFileName($p.MainModule)
         Write-Host "  - $exe (PID $($p.Id))" -ForegroundColor Yellow
     }
-    Write-Host "  Locked file: $([System.IO.Path]::GetFileName($LockedFile))" -ForegroundColor Yellow
+    if ($LockedFile) {
+        Write-Host "  Locked file: $([System.IO.Path]::GetFileName($LockedFile))" -ForegroundColor Yellow
+    }
     Write-Host ''
 
     $choice = Read-Confirm -Prompt 'Stop these processes and retry' -Default $false
@@ -434,7 +436,7 @@ function Install-Or-Update-LlamaSwap {
     # Proactive: check for processes holding files before we start copying
     $swapLocks = Get-ProcessesUsingDir -Dir $LlamaSwapDir
     if ($swapLocks.Count -gt 0) {
-        Stop-LockedProcesses -Processes $swapLocks -LockedFile (Join-Path $LlamaSwapDir 'locked')
+        Stop-LockedProcesses -Processes $swapLocks
     }
     Expand-ToDir -Zip $zip -Dest $LlamaSwapDir
     Remove-Item $zip -Force
@@ -654,7 +656,7 @@ function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
     # Proactive: check for processes holding files before we start copying
     $cppLocks = Get-ProcessesUsingDir -Dir $LlamaCppDir
     if ($cppLocks.Count -gt 0) {
-        Stop-LockedProcesses -Processes $cppLocks -LockedFile (Join-Path $LlamaCppDir 'locked')
+        Stop-LockedProcesses -Processes $cppLocks
     }
     Expand-ToDir -Zip $zip -Dest $LlamaCppDir
     Remove-Item $zip -Force
@@ -664,7 +666,7 @@ function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
         # Proactive: check for processes holding files before CUDA merge
         $cudaLocks = Get-ProcessesUsingDir -Dir $LlamaCppDir
         if ($cudaLocks.Count -gt 0) {
-            Stop-LockedProcesses -Processes $cudaLocks -LockedFile (Join-Path $LlamaCppDir 'locked')
+            Stop-LockedProcesses -Processes $cudaLocks
         }
         Expand-ToDir -Zip $cudaZip -Dest $LlamaCppDir
         Remove-Item $cudaZip -Force
