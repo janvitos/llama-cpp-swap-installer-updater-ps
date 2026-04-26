@@ -249,10 +249,85 @@ function Invoke-Download ([string]$Url, [string]$OutFile) {
     Write-Ok "$fileName downloaded."
 }
 
+# -------------------------------------------------------------------------------
+# Process / file-lock helpers
+# -------------------------------------------------------------------------------
+
+function Get-ProcessesUsingDir ([string]$Dir) {
+    # Finds processes that have any loaded module (EXE or DLL) under $Dir.
+    # Returns an array of hashtables: @{ Name; Id; MainModule }. Returns empty if none.
+    $dirLower = $Dir.ToLower()
+    $procs = @()
+    Get-Process | ForEach-Object {
+        $proc = $_
+        # Check the main executable
+        try {
+            $mainExe = $proc.MainModule.FileName
+            if ($mainExe -and $mainExe.ToLower().StartsWith($dirLower)) {
+                $procs += @{ Name = $proc.Name; Id = $proc.Id; MainModule = $mainExe }
+                return
+            }
+        } catch { }
+        # Check loaded modules (DLLs)
+        try {
+            $proc.Modules | ForEach-Object {
+                $mod = $_.FileName
+                if ($mod -and $mod.ToLower().StartsWith($dirLower)) {
+                    $procs += @{ Name = $proc.Name; Id = $proc.Id; MainModule = $proc.MainModule.FileName }
+                    return
+                }
+            }
+        } catch { }
+    }
+    return $procs
+}
+
+function Stop-LockedProcesses ([hashtable[]]$Processes, [string]$LockedFile) {
+    # Prompts the user to stop processes that have $LockedFile open.
+    # Returns $true if all processes were stopped successfully, $false otherwise.
+    Write-Host ''
+    Write-Warn "The following process(es) are using files that need to be updated:"
+    Write-Host ''
+    foreach ($p in $Processes) {
+        $exe = [System.IO.Path]::GetFileName($p.MainModule)
+        Write-Host "  - $exe (PID $($p.Id))" -ForegroundColor Yellow
+    }
+    Write-Host "  Locked file: $([System.IO.Path]::GetFileName($LockedFile))" -ForegroundColor Yellow
+    Write-Host ''
+
+    $choice = Read-Confirm -Prompt 'Stop these processes and retry' -Default $false
+    if (-not $choice) {
+        Write-Warn 'Install aborted.'
+        exit 1
+    }
+
+    foreach ($p in $Processes) {
+        Write-Info "Stopping $($p.Name) (PID $($p.Id))..."
+        try {
+            Stop-Process -Name $p.Name -Force -ErrorAction Stop
+        } catch {
+            Write-Warn "Failed to stop $($p.Name): $_"
+        }
+    }
+
+    # Give the OS a moment to release file handles
+    Start-Sleep -Seconds 1
+
+    # Verify they're actually gone
+    $stillRunning = @(Get-Process -Name $Processes[0].Name -ErrorAction SilentlyContinue)
+    if ($stillRunning.Count -gt 0) {
+        Write-Warn 'Processes did not terminate. Please stop them manually and run the installer again.'
+        exit 1
+    }
+
+    return $true
+}
+
 function Expand-ToDir ([string]$Zip, [string]$Dest) {
     # Extracts $Zip into $Dest, merging with any existing content.
     # If the zip contains a single top-level folder (GitHub release convention),
     # its contents are promoted directly into $Dest so there is no extra nesting.
+    # Handles file-in-use by detecting locked processes and offering to stop them.
 
     $staging = Join-Path $DownloadDir "_staging_$([System.IO.Path]::GetFileNameWithoutExtension($Zip))"
     if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
@@ -263,13 +338,54 @@ function Expand-ToDir ([string]$Zip, [string]$Dest) {
         New-Item -ItemType Directory -Path $Dest -Force | Out-Null
     }
 
-    $items = @(Get-ChildItem $staging)
+    $lockedFile = $null
+    $copyOk     = $false
+    $items      = @(Get-ChildItem $staging)
+
     if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
-        # Single subfolder -- promote its contents
-        Get-ChildItem $items[0].FullName | Copy-Item -Destination $Dest -Recurse -Force
+        $src = $items[0].FullName
+    } else {
+        $src = $staging
     }
-    else {
-        Get-ChildItem $staging | Copy-Item -Destination $Dest -Recurse -Force
+
+    # Attempt copy; on failure, detect locked processes and retry once
+    try {
+        Get-ChildItem $src | Copy-Item -Destination $Dest -Recurse -Force
+        $copyOk = $true
+    }
+    catch {
+        if ($_.Exception -is [System.IO.IOException]) {
+            # Extract the locked file path from the exception message
+            $msg = $_.Exception.Message
+            if ($msg -match "'([^']+)'") {
+                $lockedFile = $Matches[1]
+            } else {
+                $lockedFile = Join-Path $Dest 'unknown'
+            }
+
+            $lockedProcs = Get-ProcessesUsingDir -Dir $Dest
+            if ($lockedProcs.Count -gt 0) {
+                Stop-LockedProcesses -Processes $lockedProcs -LockedFile $lockedFile
+                # Retry after processes are stopped
+                Start-Sleep -Milliseconds 300
+                try {
+                    Get-ChildItem $src | Copy-Item -Destination $Dest -Recurse -Force
+                    $copyOk = $true
+                } catch {
+                    Write-Warn "Still unable to copy after stopping processes."
+                }
+            }
+        }
+    }
+
+    if (-not $copyOk) {
+        Write-Warn "Failed to extract $([System.IO.Path]::GetFileName($Zip))."
+        if ($lockedFile) {
+            Write-Info "Locked file: $lockedFile"
+        }
+        Write-Info "Staging directory cleaned up."
+        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+        exit 1
     }
 
     Remove-Item $staging -Recurse -Force
@@ -315,6 +431,11 @@ function Install-Or-Update-LlamaSwap {
 
     Write-Do "Installing to $LlamaSwapDir ..."
     if (Test-Path $LlamaSwapDir) { Remove-Item $LlamaSwapDir -Recurse -Force }
+    # Proactive: check for processes holding files before we start copying
+    $swapLocks = Get-ProcessesUsingDir -Dir $LlamaSwapDir
+    if ($swapLocks.Count -gt 0) {
+        Stop-LockedProcesses -Processes $swapLocks -LockedFile (Join-Path $LlamaSwapDir 'locked')
+    }
     Expand-ToDir -Zip $zip -Dest $LlamaSwapDir
     Remove-Item $zip -Force
 
@@ -530,11 +651,21 @@ function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
         Remove-Item $LlamaCppDir -Recurse -Force
     }
 
+    # Proactive: check for processes holding files before we start copying
+    $cppLocks = Get-ProcessesUsingDir -Dir $LlamaCppDir
+    if ($cppLocks.Count -gt 0) {
+        Stop-LockedProcesses -Processes $cppLocks -LockedFile (Join-Path $LlamaCppDir 'locked')
+    }
     Expand-ToDir -Zip $zip -Dest $LlamaCppDir
     Remove-Item $zip -Force
 
     if ($cudaZip -and (Test-Path $cudaZip)) {
         Write-Do 'Merging CUDA runtime DLLs...'
+        # Proactive: check for processes holding files before CUDA merge
+        $cudaLocks = Get-ProcessesUsingDir -Dir $LlamaCppDir
+        if ($cudaLocks.Count -gt 0) {
+            Stop-LockedProcesses -Processes $cudaLocks -LockedFile (Join-Path $LlamaCppDir 'locked')
+        }
         Expand-ToDir -Zip $cudaZip -Dest $LlamaCppDir
         Remove-Item $cudaZip -Force
     }
