@@ -365,7 +365,7 @@ function Expand-ToDir ([string]$Zip, [string]$Dest) {
                 $lockedFile = Join-Path $Dest 'unknown'
             }
 
-            $lockedProcs = Get-ProcessesUsingDir -Dir $Dest
+            $lockedProcs = @(Get-ProcessesUsingDir -Dir $Dest)
             if ($lockedProcs.Count -gt 0) {
                 Stop-LockedProcesses -Processes $lockedProcs -LockedFile $lockedFile
                 # Retry after processes are stopped
@@ -434,7 +434,7 @@ function Install-Or-Update-LlamaSwap {
     Write-Do "Installing to $LlamaSwapDir ..."
     if (Test-Path $LlamaSwapDir) { Remove-Item $LlamaSwapDir -Recurse -Force }
     # Proactive: check for processes holding files before we start copying
-    $swapLocks = Get-ProcessesUsingDir -Dir $LlamaSwapDir
+    $swapLocks = @(Get-ProcessesUsingDir -Dir $LlamaSwapDir)
     if ($swapLocks.Count -gt 0) {
         Stop-LockedProcesses -Processes $swapLocks
     }
@@ -654,7 +654,7 @@ function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
     }
 
     # Proactive: check for processes holding files before we start copying
-    $cppLocks = Get-ProcessesUsingDir -Dir $LlamaCppDir
+    $cppLocks = @(Get-ProcessesUsingDir -Dir $LlamaCppDir)
     if ($cppLocks.Count -gt 0) {
         Stop-LockedProcesses -Processes $cppLocks
     }
@@ -664,7 +664,7 @@ function Install-Or-Update-LlamaCpp ([switch]$ForceMenu) {
     if ($cudaZip -and (Test-Path $cudaZip)) {
         Write-Do 'Merging CUDA runtime DLLs...'
         # Proactive: check for processes holding files before CUDA merge
-        $cudaLocks = Get-ProcessesUsingDir -Dir $LlamaCppDir
+        $cudaLocks = @(Get-ProcessesUsingDir -Dir $LlamaCppDir)
         if ($cudaLocks.Count -gt 0) {
             Stop-LockedProcesses -Processes $cudaLocks
         }
